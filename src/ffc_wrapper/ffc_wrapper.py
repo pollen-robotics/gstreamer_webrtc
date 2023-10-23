@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -34,6 +35,7 @@ class FFCWrapper:
         assert codec in ["h264", "h265"]
         assert rescale in ["no", "720p"]
 
+        self._logger = logging.getLogger(__name__)
         self.fps = fps
         self.rescale = rescale
         if rescale == "720p":
@@ -54,19 +56,11 @@ class FFCWrapper:
         for cam_id, cam_name in self.cam_info.items():
             self.cam_info_reverse[cam_name] = cam_id
 
-        print("=================")
-        print(
-            "Hardware synchronization is :",
-            "enabled" if self.hardware_sync else "disabled",
-        )
-        print(
-            "Hardware rectification is :",
-            "enabled" if self.hardware_rectify else "disabled",
-        )
-        print("Rescale is :", rescale)
-        print("FPS is :", self.fps)
-        print("Cam type is :", self.cam_type)
-        print("=================")
+        self._logger.info(f"Hardware synchronization is {self.hardware_sync}")
+        self._logger.info(f"Hardware rectification is {self.hardware_rectify}")
+        self._logger.info(f"Rescale is : {rescale}")
+        self._logger.info(f"FPS is : {self.fps}")
+        self._logger.info(f"Cam type is : {self.cam_type}")
 
         self.calib = None
         if self.hardware_rectify:
@@ -106,7 +100,7 @@ class FFCWrapper:
                 dai.ColorCameraProperties.SensorResolution.THE_1200_P
             )
         else:
-            print("ERROR : unknown cam type", self.cam_type)
+            self._logger.error(f"ERROR : unknown cam type {self.cam_type}")
             exit()
 
         return cam_node
@@ -252,7 +246,7 @@ class FFCWrapper:
         r_CS = stringToCam[self.cam_info_reverse["right"]]
 
         if not self.calib:
-            print("camera not calibrated")
+            self._logger.error("camera not calibrated")
             exit()
 
         left_K = np.array(
@@ -308,9 +302,6 @@ class FFCWrapper:
         mesh_np.resize(meshWidth * meshHeight, 2)
 
         mesh = list(map(tuple, mesh_np))
-
-        print(mesh[0], mesh[0][0])
-        print(type(mesh[0][0]))
 
         return mesh, meshWidth, meshHeight  # type: ignore [return-value]
 
