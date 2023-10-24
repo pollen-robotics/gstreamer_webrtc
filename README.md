@@ -101,3 +101,7 @@ Then, if all tests are sucessful:
 
  Specific choices are detailed in dedicated document:
  - for the mathematical notation please refer to [Coding convention for Maths](docs/convention_maths.md)
+
+python src/gstreamer.py --config config/CONFIG_OAK.json producer --name robot --verbose --rescale 720p
+
+             
