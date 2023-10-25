@@ -1,8 +1,6 @@
 # Python Guidelines and Coding style
 
-Template code and examples for python project respecting the [PEP8 coding style](https://peps.python.org/pep-0008/).
-
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) ![linter](https://github.com/pollen-robotics/python-coding-guidelines/actions/workflows/lint.yml/badge.svg) ![pytest](https://github.com/pollen-robotics/python-coding-guidelines/actions/workflows/pytest.yml/badge.svg) ![coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/FabienDanieau/58642e8fe4589e710e26627e39ff92d7/raw/covbadge.json)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) 
 
 
 
@@ -15,12 +13,6 @@ The dependencies are listed in the ```setup.cfg``` file and will be installed if
 pip install -e .[dev]
 ```
 use *[dev]* for optional development tools.
-
-
-Once this is done, you should be able to import the Python package anywhere on your system with:
-```
-import example
-```
 
 
 ### git
