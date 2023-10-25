@@ -15,15 +15,21 @@ from gi.repository import Gst
 class GstAVPipeline:
     def __init__(
         self,
+        name: str,
         signalling_host: str,
         signalling_port: int,
+        stream_type: str,
         lowlatencyaudio: bool = True,
         localnetwork: bool = False,
         peer_audio_id: str = "",
+        congestion: bool = True,
+        aec: str = "normal",
     ):
         """Initialize GStreamer WebRTC app."""
 
         self._logger = logging.getLogger(__name__)
+        self._name = name
+        self._stream_type = stream_type
         self._signalling_host = signalling_host
         self._signalling_port = signalling_port
         self._pipeline = None
@@ -32,6 +38,8 @@ class GstAVPipeline:
         self._lowlatencyaudio = lowlatencyaudio
         self._localnetwork = localnetwork
         self._peer_audio_id = peer_audio_id
+        self._congestion = congestion
+        self._aec = aec
 
         self._thread_bus_calls = threading.Thread(target=self.handle_bus_calls)
         self._thread_running = False
@@ -57,11 +65,12 @@ class GstAVPipeline:
         assert self._pipeline is not None
         webrtcsink = Gst.ElementFactory.make("webrtcsink")
         meta_structure = Gst.Structure.new_empty("meta")
-        meta_structure.set_value("name", "robot")
+        meta_structure.set_value("name", self._name)
         webrtcsink.set_property("meta", meta_structure)
         if self._localnetwork:
-            webrtcsink.set_property("congestion-control", "disabled")
             webrtcsink.set_property("stun-server", None)
+        if not self._congestion:
+            webrtcsink.set_property("congestion-control", "disabled")
         signaller = webrtcsink.get_property("signaller")
         signaller.set_property(
             "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
@@ -146,7 +155,7 @@ class GstAVPipeline:
             audioresample = self._add_audioresample()  # type: ignore[no-untyped-call]
             alsasink = self._add_alsasink(self._lowlatencyaudio)
 
-            if self._add_alsasrc is None:
+            if self._add_alsasrc is None or self._aec == "off":
                 pad.link(queue_audio_playback.get_static_pad("sink"))
             else:
                 pad.link(webrtcechoprobe.get_static_pad("sink"))
@@ -196,8 +205,9 @@ class GstAVPipeline:
     def _add_webrtcdsp(self):  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         webrtcdsp = Gst.ElementFactory.make("webrtcdsp")
-        # webrtcdsp.set_property("delay-agnostic", True)
-        # webrtcdsp.set_property("echo-suppression", 3)
+        if self._aec == "strong":
+            webrtcdsp.set_property("delay-agnostic", True)
+            webrtcdsp.set_property("echo-suppression", 3)
         self._pipeline.add(webrtcdsp)
         return webrtcdsp
 
@@ -248,19 +258,19 @@ class GstAVPipeline:
             self._logger.error("Failed to link caps -> webrtcsink")
 
     def _set_audio_playback(self) -> None:
-        if self._peer_audio_id != "":
-            self._logger.info("Set up audio playback pipeline")
-            self._add_webrtcsrc(self._peer_audio_id)
-        else:
-            self._logger.info("audio playback disabled")
+        self._logger.info("Set up audio playback pipeline")
+        self._add_webrtcsrc(self._peer_audio_id)
 
     def make_pipeline(self) -> None:
         self._pipeline = Gst.Pipeline.new()
         webrtcsink = self._add_webrtcink()  # type: ignore[no-untyped-call]
 
-        self._set_stereo_video(webrtcsink)
-        self._set_stereo_audio(webrtcsink)
-        self._set_audio_playback()
+        if self._stream_type == "video" or self._stream_type == "audiovideo":
+            self._set_stereo_video(webrtcsink)
+        if self._stream_type == "audio" or self._stream_type == "audiovideo":
+            self._set_stereo_audio(webrtcsink)
+        if self._peer_audio_id != "":
+            self._set_audio_playback()
 
     def push_frame(self, appsrc, data: npt.NDArray[np.uint8]) -> None:  # type: ignore[no-untyped-def]
         buf = Gst.Buffer.new_wrapped(data.tobytes())
