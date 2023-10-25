@@ -24,6 +24,7 @@ jobs:
           cache: 'pip' # caching pip dependencies
       - name: Install dependencies
         run: |
+          apt install -y libcairo2-dev
           python -m pip install --upgrade pip
           pip install .[dev]
       - name : Check import order
@@ -40,6 +41,7 @@ jobs:
           cache: 'pip' # caching pip dependencies
       - name: Install dependencies
         run: |
+          apt install -y libcairo2-dev
           python -m pip install --upgrade pip
           pip install .[dev]
       - name: Lint with flake8
@@ -60,6 +62,7 @@ jobs:
           cache: 'pip' # caching pip dependencies
       - name: Install dependencies
         run: |
+          apt install -y libcairo2-dev
           python -m pip install --upgrade pip
           pip install .[dev]
       - name : Lint with mypy
