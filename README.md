@@ -1,8 +1,8 @@
-# Python Guidelines and Coding style
+# Gstreamer WebRTC
 
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) 
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) ![linter](https://github.com/pollen-robotics/gstreamer_webrtc/actions/workflows/lint.yml/badge.svg)
 
-
+This python code streams video from a Luxonis Camera, and audio from a microphone. It can also consume and play back an audio stream from a remote peer. This piece of software is based on the [gstreamer webrtc plugin](https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/net/webrtc).
 
 ## Installation
 
