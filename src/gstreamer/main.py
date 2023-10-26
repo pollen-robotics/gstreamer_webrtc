@@ -82,7 +82,7 @@ def main() -> None:
     if args.stream != "audio":
         ffcw = FFCWrapper(
             args.config,
-            rescale=args.rescale,
+            rescale="720p",
             fps=args.fps,
             hardware_rectify=False,
             hardware_sync=True,

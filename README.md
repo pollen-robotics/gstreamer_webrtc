@@ -22,16 +22,16 @@ The installation provides the executable `streaming_service`. Use the `--help` o
 Stream audio only
 
 ```console
-streaming_service  --config config/CONFIG_OAK.json producer --name robot --verbose --rescale 720p --stream audio
+streaming_service  --config config/CONFIG_OAK.json producer --name robot --verbose --stream audio
 ```
 
 Stream video only
 
 ```console
-streaming_service  --config config/CONFIG_OAK.json producer --name robot --verbose --rescale 720p --stream video
+streaming_service  --config config/CONFIG_OAK.json producer --name robot --verbose --stream video
 ```       
 
 Steam audio and video, and playback sound from remote peer
 ```console
-streaming_service --config config/CONFIG_OAK.json producer --name robot --verbose --rescale 720p --stream audiovideo --remote-producer-name UnityClient
+streaming_service --config config/CONFIG_OAK.json producer --name robot --verbose --stream audiovideo --remote-producer-name UnityClient
 ```
