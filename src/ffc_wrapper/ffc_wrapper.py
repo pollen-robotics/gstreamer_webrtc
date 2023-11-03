@@ -27,8 +27,8 @@ class FFCWrapper:
         config: str,
         fps: int = 30,
         rescale: str = "no",
-        hardware_sync: bool = False,
-        hardware_rectify: bool = False,
+        hardware_sync: bool = True,
+        hardware_rectify: bool = True,
         codec: str = "h264",
         usb2: bool = False,
     ):

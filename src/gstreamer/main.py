@@ -84,7 +84,7 @@ def main() -> None:
             args.config,
             rescale="720p",
             fps=args.fps,
-            hardware_rectify=False,
+            hardware_rectify=True,
             hardware_sync=True,
             usb2=args.force_usb2,
         )
