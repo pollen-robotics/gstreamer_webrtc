@@ -5,25 +5,43 @@ on: [push]
 jobs:
 
   black:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
       - uses: psf/black@stable
         with:
           options: "--check --verbose"
-          version: "23.3.0"
+          version: "23.10.0"
 
-  flake8:
-    runs-on: ubuntu-20.04
+  isort:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python 3.8
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.10"
           cache: 'pip' # caching pip dependencies
       - name: Install dependencies
         run: |
+          sudo apt install -y libgirepository1.0-dev
+          python -m pip install --upgrade pip
+          pip install .[dev]
+      - name : Check import order
+        run : isort . -c
+
+  flake8:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: 'pip' # caching pip dependencies
+      - name: Install dependencies
+        run: |
+          sudo apt install -y libgirepository1.0-dev
           python -m pip install --upgrade pip
           pip install .[dev]
       - name: Lint with flake8
@@ -31,20 +49,23 @@ jobs:
           # stop the build if there are Python syntax errors or undefined names
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           # option --exit-zero can be added to this line to set these errors as warnings
-          flake8 . --count --max-complexity=10 --max-line-length=128 --statistics
+          flake8 . --count --statistics --config setup.cfg
 
   mypy:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python 3.8
+      - name: Set up Python 3.9
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.9"
           cache: 'pip' # caching pip dependencies
       - name: Install dependencies
         run: |
+          sudo apt install -y libgirepository1.0-dev
           python -m pip install --upgrade pip
           pip install .[dev]
       - name : Lint with mypy
         run : mypy . -v
+
+

@@ -12,6 +12,10 @@ set -eo pipefail
 black . --check
 echo "-------> Black passed!"
 
+# Run isort against all code in the `source_code` directory
+isort . -c
+echo "-------> Isort passed!"
+
 # Run flake8 against all code in the `source_code` directory
 flake8 .
 echo "-------> Flake8 passed!"
