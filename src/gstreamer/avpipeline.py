@@ -84,7 +84,10 @@ class GstAVPipeline:
         appsrc.set_property("name", name)
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
-        appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
+        if self._stream_type == "video":
+            appsrc.set_property("do-timestamp", True)
+        else:
+            appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
         self._pipeline.add(appsrc)
         return appsrc
 
