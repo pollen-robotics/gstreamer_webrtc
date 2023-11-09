@@ -3,10 +3,9 @@ import logging
 import os
 import time
 
+from depthai_wrappers.teleop_wrapper import TeleopWrapper
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
-from ffc_wrapper.ffc_wrapper import FFCWrapper
-from ffc_wrapper.utils import add_common_args
 from gstreamer.avpipeline import GstAVPipeline
 from gstreamer.signalling import get_producer_id
 
@@ -45,9 +44,35 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="name of the remote peer to get audio from",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to the configuration file.",
+    )
+    parser.add_argument(
+        "--force-usb2",
+        action="store_true",
+        help="Force USB2 mode",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=60,
+        help="Frames per second (default 60)",
+    )
+    parser.add_argument(
+        "--exposure_time",
+        type=int,
+        help="Manual exposure time (must also set iso manually). If neither are set, auto parameters are used.",
+    )
+    parser.add_argument(
+        "--iso",
+        type=int,
+        help="Manual iso (must also set exposure_time manually). If neither are set, auto parameters are used.",
+    )
 
     add_signaling_arguments(parser)  # signalling args
-    add_common_args(parser)
 
     return parser.parse_args()
 
@@ -78,15 +103,14 @@ def main() -> None:
     )
     avpipeline.make_pipeline()
 
-    ffcw = None
+    teleop_wrapper = None
     if args.stream != "audio":
-        ffcw = FFCWrapper(
+        teleop_wrapper = TeleopWrapper(
             args.config,
-            rescale="720p",
             fps=args.fps,
-            hardware_rectify=True,
-            hardware_sync=True,
-            usb2=args.force_usb2,
+            resize=(1280, 720),
+            rectify=True,
+            force_usb2=args.force_usb2,
         )
 
         video_left = avpipeline.get_appsrc("left")
@@ -96,8 +120,8 @@ def main() -> None:
 
     try:
         while True:
-            if ffcw:
-                data, latency, _ = ffcw.get_data()
+            if teleop_wrapper:
+                data, latency, _ = teleop_wrapper.get_data()
                 # print(str(latency) + " ms")
                 avpipeline.push_frame(video_left, data["left"])
                 avpipeline.push_frame(video_right, data["right"])
