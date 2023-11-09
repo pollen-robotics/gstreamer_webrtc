@@ -28,3 +28,13 @@ def add_common_args(argParser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force USB2 mode",
     )
+    argParser.add_argument(
+        "--exposure_time",
+        type=int,
+        help="Manual exposure time (must also set iso manually with --iso). If neither are set, auto parameters are used.",
+    )
+    argParser.add_argument(
+        "--iso",
+        type=int,
+        help="Manual iso (must also set exposure_time manually with --exposure_time). If neither are set, auto parameters are used.",
+    )

@@ -46,6 +46,10 @@ class FFCWrapper:
         self.codec = codec
         self.exposure_params = exposure_params
         if self.exposure_params is not None:
+            assert (
+                self.exposure_params[0] is not None
+                and self.exposure_params[1] is not None
+            )
             iso = self.exposure_params[1]
             assert 100 <= iso <= 1600
 

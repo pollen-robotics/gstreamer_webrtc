@@ -87,6 +87,7 @@ def main() -> None:
             hardware_rectify=True,
             hardware_sync=True,
             usb2=args.force_usb2,
+            exposure_params=(args.exposure_time, args.iso),
         )
 
         video_left = avpipeline.get_appsrc("left")
