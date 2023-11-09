@@ -132,7 +132,8 @@ class GstAVPipeline:
     def _add_opus_enc(self):  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         opusenc = Gst.ElementFactory.make("opusenc")
-        opusenc.set_property("audio-type", "voice")
+        opusenc.set_property("audio-type", "restricted-lowdelay")
+        opusenc.set_property("frame-size", 5)
         self._pipeline.add(opusenc)
 
         audio_caps = Gst.caps_from_string("audio/x-opus")
