@@ -4,9 +4,7 @@ import time
 from gst_signalling import utils
 
 
-def get_producer_id(
-    host: str, port: int, producer_name: str, timeout: int = 1000
-) -> str:
+def get_producer_id(host: str, port: int, producer_name: str, timeout: int = 1000) -> str:
     i = 0
 
     while i < timeout:

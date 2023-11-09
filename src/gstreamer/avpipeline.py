@@ -56,9 +56,7 @@ class GstAVPipeline:
         elif name == "right":
             return self._appsrc_right
         else:
-            self._logger.warning(
-                "Unknow appsrc name : f{name}. Should be left or right."
-            )
+            self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
             return None
 
     def _add_webrtcink(self):  # type: ignore[no-untyped-def]
@@ -72,9 +70,7 @@ class GstAVPipeline:
         if not self._congestion:
             webrtcsink.set_property("congestion-control", "disabled")
         signaller = webrtcsink.get_property("signaller")
-        signaller.set_property(
-            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
-        )
+        signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
         self._pipeline.add(webrtcsink)
         return webrtcsink
 
@@ -84,10 +80,8 @@ class GstAVPipeline:
         appsrc.set_property("name", name)
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
-        if self._stream_type == "video":
-            appsrc.set_property("do-timestamp", True)
-        else:
-            appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
+        appsrc.set_property("leaky-type", 2)
+        appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
         self._pipeline.add(appsrc)
         return appsrc
 
@@ -198,9 +192,7 @@ class GstAVPipeline:
 
         signaller = webrtcsrc.get_property("signaller")
         signaller.set_property("producer-peer-id", peer_audio_id)
-        signaller.set_property(
-            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
-        )
+        signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
 
         webrtcsrc.connect("pad-added", self._webrtcsrc_pad_added_cb)
         self._pipeline.add(webrtcsrc)
@@ -225,22 +217,16 @@ class GstAVPipeline:
         self._logger.info("Set up stereo video pipeline")
         self._appsrc_left = self._add_appsrc("src_left")
         self._appsrc_right = self._add_appsrc("src_right")
-        queue_left = self._add_queue()
         h264parse_left = self._add_h264parse()
-        queue_right = self._add_queue()
         h264parse_right = self._add_h264parse()
 
-        if not Gst.Element.link(self._appsrc_left, queue_left):
-            self._logger.error("Failed to link appsrc -> queue")
-        if not Gst.Element.link(queue_left, h264parse_left):
-            self._logger.error("Failed to link queue -> h264parse")
+        if not Gst.Element.link(self._appsrc_left, h264parse_left):
+            self._logger.error("Failed to link appsrc -> h264parse")
         if not Gst.Element.link(h264parse_left, webrtcsink):
             self._logger.error("Failed to link h264parse -> webrtcsink")
 
-        if not Gst.Element.link(self._appsrc_right, queue_right):
-            self._logger.error("Failed to link appsrc -> queue")
-        if not Gst.Element.link(queue_right, h264parse_right):
-            self._logger.error("Failed to link queue -> h264parse")
+        if not Gst.Element.link(self._appsrc_right, h264parse_right):
+            self._logger.error("Failed to link appsrc -> h264parse")
         if not Gst.Element.link(h264parse_right, webrtcsink):
             self._logger.error("Failed to link h264parse -> webrtcsink")
 
@@ -275,9 +261,15 @@ class GstAVPipeline:
         if self._peer_audio_id != "":
             self._set_audio_playback()
 
-    def push_frame(self, appsrc, data: npt.NDArray[np.uint8]) -> None:  # type: ignore[no-untyped-def]
-        buf = Gst.Buffer.new_wrapped(data.tobytes())
-        appsrc.emit("push-buffer", buf)
+    def push_frame(self, appsrc, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:  # type: ignore[no-untyped-def]
+        clock = appsrc.get_clock()
+        if clock is not None:
+            buf = Gst.Buffer.new_wrapped(data.tobytes())
+            buf.pts = Gst.CLOCK_TIME_NONE
+            buf.dts = clock.get_time() - appsrc.get_base_time() - latency_ns
+            appsrc.emit("push-buffer", buf)
+        else:
+            self._logger.warning("Clock is None.")
 
     def start(self) -> None:
         if self._pipeline is not None:
@@ -309,12 +301,7 @@ class GstAVPipeline:
         elif t == Gst.MessageType.STATE_CHANGED:
             if isinstance(message.src, Gst.Pipeline):
                 old_state, new_state, pending_state = message.parse_state_changed()
-                self._logger.info(
-                    (
-                        "Pipeline state changed from %s to %s."
-                        % (old_state.value_nick, new_state.value_nick)
-                    )
-                )
+                self._logger.info(("Pipeline state changed from %s to %s." % (old_state.value_nick, new_state.value_nick)))
                 if old_state.value_nick == "paused" and new_state.value_nick == "ready":
                     self._logger.info("stopping bus message loop")
                     return False
@@ -323,9 +310,7 @@ class GstAVPipeline:
                 try:
                     self._pipeline.recalculate_latency()
                 except Exception as e:
-                    self._logger.warning(
-                        "failed to recalculate warning, exception: %s" % str(e)
-                    )
+                    self._logger.warning("failed to recalculate warning, exception: %s" % str(e))
 
         return True
 

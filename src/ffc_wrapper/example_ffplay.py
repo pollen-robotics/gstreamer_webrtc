@@ -43,9 +43,7 @@ def spawn_procs(names: List[str]) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test Luxonis camera with ffplay")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable verbose mode"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
     add_common_args(parser)
 
     args = parser.parse_args()

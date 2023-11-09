@@ -13,12 +13,8 @@ from gstreamer.signalling import get_producer_id
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="webrtc gstreamer producer/consumer")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable verbose mode"
-    )
-    parser.add_argument(
-        "--localnetwork", action="store_true", help="local network mode No STUN SERVER"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
+    parser.add_argument("--localnetwork", action="store_true", help="local network mode No STUN SERVER")
     parser.add_argument(
         "--net-congestion",
         action="store_true",
@@ -62,9 +58,7 @@ def main() -> None:
     # Todo: not here
     peer_id = ""
     if args.remote_producer_name:
-        peer_id = get_producer_id(
-            args.signaling_host, args.signaling_port, args.remote_producer_name
-        )
+        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
 
     avpipeline = GstAVPipeline(
         args.name,
@@ -84,7 +78,7 @@ def main() -> None:
             args.config,
             rescale="720p",
             fps=args.fps,
-            hardware_rectify=True,
+            hardware_rectify=False,
             hardware_sync=True,
             usb2=args.force_usb2,
         )
@@ -98,9 +92,9 @@ def main() -> None:
         while True:
             if ffcw:
                 data, latency, _ = ffcw.get_data()
-                # print(str(latency) + " ms")
-                avpipeline.push_frame(video_left, data["left"])
-                avpipeline.push_frame(video_right, data["right"])
+                # print(str(latency) + " ns")
+                avpipeline.push_frame(video_left, data["left"], latency["left"])
+                avpipeline.push_frame(video_right, data["right"], latency["right"])
             else:
                 time.sleep(0.1)
 
