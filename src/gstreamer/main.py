@@ -108,7 +108,6 @@ def main() -> None:
         teleop_wrapper = TeleopWrapper(
             args.config,
             fps=args.fps,
-            resize=(1280, 720),
             rectify=True,
             force_usb2=args.force_usb2,
         )
