@@ -31,10 +31,10 @@ def add_common_args(argParser: argparse.ArgumentParser) -> None:
     argParser.add_argument(
         "--exposure_time",
         type=int,
-        help="Manual exposure time (must also set iso manually with --iso). If neither are set, auto parameters are used.",
+        help="Manual exposure time (must also set iso manually). If neither are set, auto parameters are used.",
     )
     argParser.add_argument(
         "--iso",
         type=int,
-        help="Manual iso (must also set exposure_time manually with --exposure_time). If neither are set, auto parameters are used.",
+        help="Manual iso (must also set exposure_time manually). If neither are set, auto parameters are used.",
     )
