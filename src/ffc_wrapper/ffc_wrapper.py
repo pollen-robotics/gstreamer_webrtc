@@ -180,11 +180,10 @@ class FFCWrapper:
             out = self._linking(cam_node, cam_id, pipeline, manipRescale, manipRectify)
 
             encoder = pipeline.create(dai.node.VideoEncoder)
-            profile = dai.VideoEncoderProperties.Profile.H264_BASELINE  # TOdo select encoder
+            profile = dai.VideoEncoderProperties.Profile.H264_BASELINE  # Todo select encoder
             encoder.setDefaultProfilePreset(self.fps, profile)
-            # from https://support.google.com/youtube/answer/2853702?hl=en
-            encoder.setKeyframeFrequency(self.fps * 3)  # every 3s
-            # encoder.setNumBFrames(2)
+            encoder.setKeyframeFrequency(self.fps * 2)  # every 2s
+            encoder.setNumBFrames(0)  # gstreamer recommends 0 B frames
             if manipRectify:
                 manipRectify.out.link(encoder.input)
             elif manipRescale and self.rescale == "720p":
