@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from utils import add_common_args
 
-from ffc_wrapper import FFCWrapper
+import ffc_wrapper
 
 
 def spawn_procs(names: List[str]) -> Dict[str, Any]:
@@ -53,13 +53,15 @@ def main() -> None:
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
 
-    ffcw = FFCWrapper(
+    ffcw = ffc_wrapper.FFCWrapper(
         args.config,
         rescale=args.rescale,
         fps=args.fps,
         hardware_rectify=False,
         hardware_sync=True,
         usb2=args.force_usb2,
+        # exposure_params=(16000, 100), # exposure_time, iso
+        exposure_params=None,  # Auto
     )
 
     cams_names = ["left", "right"]
