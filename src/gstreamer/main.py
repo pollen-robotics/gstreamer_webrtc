@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import time
+from typing import Any, Dict, Tuple
 
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
@@ -48,6 +49,51 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, int]]:
+    ffcw: FFCWrapper = None
+    latency: Dict[str, int] = {}
+    if args.stream != "audio":
+        ffcw = FFCWrapper(
+            args.config,
+            rescale="720p",
+            fps=args.fps,
+            hardware_rectify=False,
+            hardware_sync=True,
+            usb2=args.force_usb2,
+        )
+
+        if ffcw is not None:
+            for _ in range(10):
+                _, latency, _ = ffcw.get_data()
+
+    return ffcw, latency
+
+
+def configure_pipeline(args: argparse.Namespace, latency: Dict[str, int], peer_id: str) -> Tuple[GstAVPipeline, Any, Any]:
+    avpipeline = GstAVPipeline(
+        args.name,
+        args.signaling_host,
+        args.signaling_port,
+        stream_type=args.stream,
+        lowlatencyaudio=args.lowlatencyaudio,
+        localnetwork=args.localnetwork,
+        peer_audio_id=peer_id,
+        congestion=args.net_congestion,
+    )
+
+    video_left = None
+    video_right = None
+
+    if args.stream != "audio":
+        avpipeline.make_pipeline(latency["left"])
+        video_left = avpipeline.get_appsrc("left")
+        video_right = avpipeline.get_appsrc("right")
+    else:
+        avpipeline.make_pipeline()
+
+    return avpipeline, video_left, video_right
+
+
 def main() -> None:
     args = parse_args()
 
@@ -60,31 +106,9 @@ def main() -> None:
     if args.remote_producer_name:
         peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
 
-    avpipeline = GstAVPipeline(
-        args.name,
-        args.signaling_host,
-        args.signaling_port,
-        stream_type=args.stream,
-        lowlatencyaudio=args.lowlatencyaudio,
-        localnetwork=args.localnetwork,
-        peer_audio_id=peer_id,
-        congestion=args.net_congestion,
-    )
-    avpipeline.make_pipeline()
+    ffcw, latency = configure_camera(args)
 
-    ffcw = None
-    if args.stream != "audio":
-        ffcw = FFCWrapper(
-            args.config,
-            rescale="720p",
-            fps=args.fps,
-            hardware_rectify=False,
-            hardware_sync=True,
-            usb2=args.force_usb2,
-        )
-
-        video_left = avpipeline.get_appsrc("left")
-        video_right = avpipeline.get_appsrc("right")
+    avpipeline, video_left, video_right = configure_pipeline(args, latency, peer_id)
 
     avpipeline.start()
 

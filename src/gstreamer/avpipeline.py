@@ -74,14 +74,16 @@ class GstAVPipeline:
         self._pipeline.add(webrtcsink)
         return webrtcsink
 
-    def _add_appsrc(self, name: str):  # type: ignore[no-untyped-def]
+    def _add_appsrc(self, name: str, cam_latency_ns: int):  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         appsrc = Gst.ElementFactory.make("appsrc")
         appsrc.set_property("name", name)
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
-        appsrc.set_property("leaky-type", 2)
-        appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
+        appsrc.set_property("leaky-type", 1)
+        cam_latency_ms = cam_latency_ns // 1000
+        appsrc.set_property("min-latency", cam_latency_ms)
+        self._logger.info(f"Video latency configured to {cam_latency_ms}")
         self._pipeline.add(appsrc)
         return appsrc
 
@@ -133,7 +135,7 @@ class GstAVPipeline:
         assert self._pipeline is not None
         opusenc = Gst.ElementFactory.make("opusenc")
         opusenc.set_property("audio-type", "restricted-lowdelay")
-        opusenc.set_property("frame-size", 5)
+        opusenc.set_property("frame-size", 10)
         self._pipeline.add(opusenc)
 
         audio_caps = Gst.caps_from_string("audio/x-opus")
@@ -145,6 +147,12 @@ class GstAVPipeline:
 
         return opusenc, audio_caps_capsfilter
 
+    def _configure_webrtcbin(self, webrtcsrc) -> None:  # type: ignore[no-untyped-def]
+        if self._localnetwork:
+            webrtcbin = webrtcsrc.get_by_name("webrtcbin0")
+            # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
+            webrtcbin.set_property("latency", 50)
+
     def _webrtcsrc_pad_added_cb(self, webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
         if pad.get_name().startswith("audio"):
             webrtcechoprobe = self._add_webrtcechoprobe()  # type: ignore[no-untyped-call]
@@ -152,6 +160,8 @@ class GstAVPipeline:
             audioconvert = self._add_audioconvert()  # type: ignore[no-untyped-call]
             audioresample = self._add_audioresample()  # type: ignore[no-untyped-call]
             alsasink = self._add_alsasink(self._lowlatencyaudio)
+
+            self._configure_webrtcbin(webrtcsrc)
 
             if self._add_alsasrc is None or self._aec == "off":
                 pad.link(queue_audio_playback.get_static_pad("sink"))
@@ -213,11 +223,11 @@ class GstAVPipeline:
         self._pipeline.add(webrtcechoprobe)
         return webrtcechoprobe
 
-    def _set_stereo_video(self, webrtcsink) -> None:  # type: ignore[no-untyped-def]
+    def _set_stereo_video(self, webrtcsink, cam_latency: int) -> None:  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         self._logger.info("Set up stereo video pipeline")
-        self._appsrc_left = self._add_appsrc("src_left")
-        self._appsrc_right = self._add_appsrc("src_right")
+        self._appsrc_left = self._add_appsrc("src_left", cam_latency)
+        self._appsrc_right = self._add_appsrc("src_right", cam_latency)
         h264parse_left = self._add_h264parse()
         h264parse_right = self._add_h264parse()
 
@@ -251,12 +261,12 @@ class GstAVPipeline:
         self._logger.info("Set up audio playback pipeline")
         self._add_webrtcsrc(self._peer_audio_id)
 
-    def make_pipeline(self) -> None:
+    def make_pipeline(self, cam_latency: int = 0) -> None:
         self._pipeline = Gst.Pipeline.new()
         webrtcsink = self._add_webrtcink()  # type: ignore[no-untyped-call]
 
         if self._stream_type == "video" or self._stream_type == "audiovideo":
-            self._set_stereo_video(webrtcsink)
+            self._set_stereo_video(webrtcsink, cam_latency)
         if self._stream_type == "audio" or self._stream_type == "audiovideo":
             self._set_stereo_audio(webrtcsink)
         if self._peer_audio_id != "":
@@ -267,7 +277,9 @@ class GstAVPipeline:
         if clock is not None:
             buf = Gst.Buffer.new_wrapped(data.tobytes())
             buf.pts = Gst.CLOCK_TIME_NONE
-            buf.dts = clock.get_time() - appsrc.get_base_time() - latency_ns
+            dts = clock.get_time() - appsrc.get_base_time() - latency_ns
+            if dts >= 0:
+                buf.dts = dts
             appsrc.emit("push-buffer", buf)
         else:
             self._logger.warning("Clock is None.")
