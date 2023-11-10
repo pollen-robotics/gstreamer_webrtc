@@ -57,7 +57,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, in
             args.config,
             rescale="720p",
             fps=args.fps,
-            hardware_rectify=False,
+            hardware_rectify=args.disable_hard_rectify,
             hardware_sync=True,
             usb2=args.force_usb2,
         )
