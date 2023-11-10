@@ -184,7 +184,7 @@ class FFCWrapper:
             encoder.setDefaultProfilePreset(self.fps, profile)
             encoder.setKeyframeFrequency(self.fps)  # every 1s
             encoder.setNumBFrames(0)  # gstreamer recommends 0 B frames
-            # encoder.setBitrateKbps(4000)
+            encoder.setBitrateKbps(4000)
 
             if manipRectify:
                 manipRectify.out.link(encoder.input)

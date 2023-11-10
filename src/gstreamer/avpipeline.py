@@ -80,10 +80,10 @@ class GstAVPipeline:
         appsrc.set_property("name", name)
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
-        appsrc.set_property("leaky-type", 1)
-        cam_latency_ms = cam_latency_ns // 1000
-        appsrc.set_property("min-latency", cam_latency_ms)
-        self._logger.info(f"Video latency configured to {cam_latency_ms}")
+        appsrc.set_property("leaky-type", 2)
+        appsrc.set_property("min-latency", cam_latency_ns)
+        appsrc.set_property("max-buffers", 100)
+        self._logger.info(f"Video latency configured to {cam_latency_ns}")
         self._pipeline.add(appsrc)
         return appsrc
 
@@ -274,15 +274,28 @@ class GstAVPipeline:
 
     def push_frame(self, appsrc, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:  # type: ignore[no-untyped-def]
         clock = appsrc.get_clock()
-        if clock is not None:
-            buf = Gst.Buffer.new_wrapped(data.tobytes())
-            buf.pts = Gst.CLOCK_TIME_NONE
-            dts = clock.get_time() - appsrc.get_base_time() - latency_ns
-            if dts >= 0:
-                buf.dts = dts
-            appsrc.emit("push-buffer", buf)
-        else:
-            self._logger.warning("Clock is None.")
+        if clock is None:
+            self._logger.warning("Pipeline is not playing")
+            return
+
+        basetime = appsrc.get_base_time()
+        now = clock.get_time()
+        if now < basetime:
+            self._logger.warning("Bastime is not valid")
+            return
+
+        time = now - basetime
+        if latency_ns > time:
+            # This frame was captured before the pipeline was started
+            # It could be a good time to request a keyframe
+            self._logger.warning("Skipping early captured frame")
+            return
+
+        buf = Gst.Buffer.new_wrapped(data.tobytes())
+        buf.pts = Gst.CLOCK_TIME_NONE
+        buf.dts = time - latency_ns
+
+        appsrc.emit("push-buffer", buf)
 
     def start(self) -> None:
         if self._pipeline is not None:
