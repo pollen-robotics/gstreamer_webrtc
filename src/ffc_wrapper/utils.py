@@ -28,3 +28,9 @@ def add_common_args(argParser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force USB2 mode",
     )
+
+    argParser.add_argument(
+        "--disable-hard-rectify",
+        action="store_false",
+        help="Disable hardware rectification",
+    )
