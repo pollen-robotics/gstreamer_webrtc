@@ -75,30 +75,20 @@ class FFCWrapper:
 
         self.queue = {}
         for cam_id in self.cams.keys():
-            self.queue[cam_id] = self.device.getOutputQueue(
-                cam_id, maxSize=30, blocking=True
-            )
+            self.queue[cam_id] = self.device.getOutputQueue(cam_id, maxSize=30, blocking=True)
 
-    def _set_up_cam_node(
-        self, pipeline: dai.Pipeline, cam_id: str
-    ) -> dai.node.ColorCamera:
+    def _set_up_cam_node(self, pipeline: dai.Pipeline, cam_id: str) -> dai.node.ColorCamera:
         cam_node = pipeline.createColorCamera()
         cam_node.initialControl.setManualFocus(135)  # Needed ?
         cam_node.setBoardSocket(stringToCam[cam_id])
         if self.cam_type == "ov" or self.cam_type == "oak":
             cam_node.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
         elif self.cam_type == "imx296":
-            cam_node.setResolution(
-                dai.ColorCameraProperties.SensorResolution.THE_1440X1080
-            )
+            cam_node.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1440X1080)
         elif self.cam_type == "imx378":
-            cam_node.setResolution(
-                dai.ColorCameraProperties.SensorResolution.THE_1080_P
-            )
+            cam_node.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
         elif self.cam_type == "AR":
-            cam_node.setResolution(
-                dai.ColorCameraProperties.SensorResolution.THE_1200_P
-            )
+            cam_node.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1200_P)
         else:
             self._logger.error(f"ERROR : unknown cam type {self.cam_type}")
             exit()
@@ -110,13 +100,9 @@ class FFCWrapper:
         # https://discuss.luxonis.com/d/934-ffc-4p-hardware-synchronization/4
         if "CAM_D" in self.cam_info.keys():
             if cam_id == "CAM_D":
-                cam_node.initialControl.setFrameSyncMode(
-                    dai.CameraControl.FrameSyncMode.OUTPUT
-                )
+                cam_node.initialControl.setFrameSyncMode(dai.CameraControl.FrameSyncMode.OUTPUT)
             else:
-                cam_node.initialControl.setFrameSyncMode(
-                    dai.CameraControl.FrameSyncMode.INPUT
-                )
+                cam_node.initialControl.setFrameSyncMode(dai.CameraControl.FrameSyncMode.INPUT)
 
     def _set_manip_rescale(self, pipeline: dai.Pipeline) -> dai.node.ImageManip:
         manipRescale = pipeline.createImageManip()
@@ -128,9 +114,7 @@ class FFCWrapper:
             manipRescale.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
         return manipRescale
 
-    def _set_hardware_rectify(
-        self, pipeline: dai.Pipeline, cam_id: str
-    ) -> dai.node.ImageManip:
+    def _set_hardware_rectify(self, pipeline: dai.Pipeline, cam_id: str) -> dai.node.ImageManip:
         manipRectify = pipeline.createImageManip()
 
         mesh, meshWidth, meshHeight = self.get_mesh(
@@ -196,21 +180,18 @@ class FFCWrapper:
             out = self._linking(cam_node, cam_id, pipeline, manipRescale, manipRectify)
 
             encoder = pipeline.create(dai.node.VideoEncoder)
-            profile = (
-                dai.VideoEncoderProperties.Profile.H264_MAIN
-            )  # TOdo select encoder
+            profile = dai.VideoEncoderProperties.Profile.H264_MAIN  # Todo select encoder
             encoder.setDefaultProfilePreset(self.fps, profile)
-            # from https://support.google.com/youtube/answer/2853702?hl=en
-            encoder.setKeyframeFrequency(self.fps * 3)  # every 3s
-            # encoder.setNumBFrames(2)
+            encoder.setKeyframeFrequency(self.fps)  # every 1s
+            encoder.setNumBFrames(0)  # gstreamer recommends 0 B frames
+            # encoder.setBitrateKbps(4000)
+
             if manipRectify:
                 manipRectify.out.link(encoder.input)
             elif manipRescale and self.rescale == "720p":
                 manipRescale.out.link(encoder.input)
             else:
-                cam_node.isp.link(
-                    encoder.input
-                )  # Maybe cam_node.video instead of isp ? (was video before)
+                cam_node.isp.link(encoder.input)  # Maybe cam_node.video instead of isp ? (was video before)
 
             encoder.bitstream.link(out.input)
 
@@ -220,11 +201,7 @@ class FFCWrapper:
 
     def get_data(
         self,
-    ) -> Tuple[
-        Dict[str, npt.NDArray[np.uint8]],
-        Dict[str, float],
-        Dict[str, datetime.timedelta],
-    ]:
+    ) -> Tuple[Dict[str, npt.NDArray[np.uint8]], Dict[str, float], Dict[str, datetime.timedelta],]:
         self._update_data()
         return self.data, self.latency, self.ts
 
@@ -236,12 +213,10 @@ class FFCWrapper:
             self.data[self.cam_info[cam]] = pkt.getData()  # type: ignore[attr-defined]
             self.latency[self.cam_info[cam]] = (
                 dai.Clock.now() - pkt.getTimestamp()  # type: ignore[attr-defined, call-arg]
-            ).total_seconds() * 1000
+            ).microseconds * 1000  # nanoseconds
             self.ts[self.cam_info[cam]] = pkt.getTimestamp()  # type: ignore[attr-defined]
 
-    def get_mesh(
-        self, cam_name: str, resolution: Tuple[int, int]
-    ) -> Tuple[List[Tuple[float, float]], int, int]:
+    def get_mesh(self, cam_name: str, resolution: Tuple[int, int]) -> Tuple[List[Tuple[float, float]], int, int]:
         l_CS = stringToCam[self.cam_info_reverse["left"]]
         r_CS = stringToCam[self.cam_info_reverse["right"]]
 
@@ -249,14 +224,10 @@ class FFCWrapper:
             self._logger.error("camera not calibrated")
             exit()
 
-        left_K = np.array(
-            self.calib.getCameraIntrinsics(l_CS, resolution[0], resolution[1])
-        )
+        left_K = np.array(self.calib.getCameraIntrinsics(l_CS, resolution[0], resolution[1]))
         left_D = np.array(self.calib.getDistortionCoefficients(l_CS))
         R1 = np.array(self.calib.getStereoLeftRectificationRotation())
-        right_K = np.array(
-            self.calib.getCameraIntrinsics(r_CS, resolution[0], resolution[1])
-        )
+        right_K = np.array(self.calib.getCameraIntrinsics(r_CS, resolution[0], resolution[1]))
         right_D = np.array(self.calib.getDistortionCoefficients(r_CS))
         R2 = np.array(self.calib.getStereoRightRectificationRotation())
 
