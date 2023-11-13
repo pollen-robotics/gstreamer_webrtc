@@ -35,3 +35,9 @@ Steam audio and video, and playback sound from remote peer
 ```console
 streaming_service --config config/CONFIG_OAK.json producer --name robot --verbose --stream audiovideo --remote-producer-name UnityClient
 ```
+
+Simple consumer for debugging purposes
+```console
+python src/gstreamer/simple_consumer.py consumer --remote-producer-peer-id <peer_id>
+```
+THe peer_id can be get in the log of the signalling server
