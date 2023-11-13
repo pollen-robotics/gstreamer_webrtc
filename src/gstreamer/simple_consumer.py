@@ -11,7 +11,7 @@ decoder = None
 
 def webrtcsrc_pad_added_cb(webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
     webrtcbin = webrtcsrc.get_by_name("webrtcbin0")
-    webrtcbin.set_property("latency", 50)
+    webrtcbin.set_property("latency", 20)
     global decoder
     if decoder is not None:
         pad.link(decoder.get_static_pad("sink"))
@@ -64,21 +64,25 @@ def main() -> None:
 
     # Wait until error or EOS
     bus = pipeline.get_bus()
-    while True:
-        msg = bus.timed_pop_filtered(10 * Gst.MSECOND, Gst.MessageType.ANY)
-        if msg:
-            if msg.type == Gst.MessageType.ERROR:
-                err, debug = msg.parse_error()
-                print(f"Error: {err}, {debug}")
-                break
-            elif msg.type == Gst.MessageType.EOS:
-                print("End-Of-Stream reached.")
-                break
-            # else:
-            #    print(f"Message: {msg.type}")
-
-    # Free resources
-    pipeline.set_state(Gst.State.NULL)
+    try:
+        while True:
+            msg = bus.timed_pop_filtered(10 * Gst.MSECOND, Gst.MessageType.ANY)
+            if msg:
+                if msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    print(f"Error: {err}, {debug}")
+                    break
+                elif msg.type == Gst.MessageType.EOS:
+                    print("End-Of-Stream reached.")
+                    break
+                # else:
+                #    print(f"Message: {msg.type}")
+    except KeyboardInterrupt:
+        print("User exit")
+    finally:
+        # Free resources
+        pipeline.set_state(Gst.State.NULL)
+        Gst.deinit()
 
 
 if __name__ == "__main__":
