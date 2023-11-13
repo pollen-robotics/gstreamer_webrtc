@@ -34,9 +34,7 @@ class FFCWrapper:
         hardware_rectify: bool = True,
         codec: str = "h264",
         usb2: bool = False,
-        exposure_params: Optional[
-            Tuple[int, int]
-        ] = None,  # (exposure_time, iso). None means auto
+        exposure_params: Optional[Tuple[int, int]] = None,  # (exposure_time, iso). None means auto
     ) -> None:
         assert codec in ["h264", "h265"]
         assert rescale in ["no", "720p"]
@@ -51,10 +49,7 @@ class FFCWrapper:
         self.codec = codec
         self.exposure_params = exposure_params
         if self.exposure_params is not None:
-            assert (
-                self.exposure_params[0] is not None
-                and self.exposure_params[1] is not None
-            )
+            assert self.exposure_params[0] is not None and self.exposure_params[1] is not None
             iso = self.exposure_params[1]
             assert 100 <= iso <= 1600
 

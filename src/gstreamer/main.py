@@ -14,12 +14,8 @@ from gstreamer.signalling import get_producer_id
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="webrtc gstreamer producer/consumer")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable verbose mode"
-    )
-    parser.add_argument(
-        "--localnetwork", action="store_true", help="local network mode No STUN SERVER"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
+    parser.add_argument("--localnetwork", action="store_true", help="local network mode No STUN SERVER")
     parser.add_argument(
         "--net-congestion",
         action="store_true",
@@ -67,9 +63,10 @@ def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, in
             hardware_rectify=args.disable_hard_rectify,
             hardware_sync=True,
             usb2=args.force_usb2,
-	    exposure_params=exposure_params,
+            exposure_params=exposure_params,
         )
 
+        # fetch some frames to get the actual latency
         if ffcw is not None:
             for _ in range(10):
                 _, latency, _ = ffcw.get_data()
