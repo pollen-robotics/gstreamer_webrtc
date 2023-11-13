@@ -80,6 +80,10 @@ def main() -> None:
 
     ffcw = None
     if args.stream != "audio":
+        exposure_params = None
+        if args.exposure_time is not None and args.iso is not None:
+            exposure_params = (args.exposure_time, args.iso)
+
         ffcw = FFCWrapper(
             args.config,
             rescale="720p",
@@ -87,7 +91,7 @@ def main() -> None:
             hardware_rectify=True,
             hardware_sync=True,
             usb2=args.force_usb2,
-            exposure_params=(args.exposure_time, args.iso),
+            exposure_params=exposure_params,
         )
 
         video_left = avpipeline.get_appsrc("left")

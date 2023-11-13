@@ -8,6 +8,9 @@ import depthai as dai
 import numpy as np
 import numpy.typing as npt
 
+Optional
+
+
 stringToCam = {
     "CAM_A": dai.CameraBoardSocket.CAM_A,
     "CAM_B": dai.CameraBoardSocket.CAM_B,
@@ -31,7 +34,9 @@ class FFCWrapper:
         hardware_rectify: bool = True,
         codec: str = "h264",
         usb2: bool = False,
-        exposure_params: tuple = None,  # (exposure_time, iso). None means auto
+        exposure_params: Optional[
+            Tuple[int, int]
+        ] = None,  # (exposure_time, iso). None means auto
     ) -> None:
         assert codec in ["h264", "h265"]
         assert rescale in ["no", "720p"]
@@ -95,7 +100,7 @@ class FFCWrapper:
         cam_node.initialControl.setManualFocus(135)  # Needed ?
         cam_node.setBoardSocket(stringToCam[cam_id])
         if self.exposure_params is not None:
-            print("setting exposure ", *self.exposure_params)
+            self._logger.info(f"setting exposure {self.exposure_params}")
             cam_node.initialControl.setManualExposure(*self.exposure_params)
 
         if self.cam_type == "ov" or self.cam_type == "oak":
