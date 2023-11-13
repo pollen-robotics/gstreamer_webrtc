@@ -50,6 +50,9 @@ class GstAVPipeline:
 
         Gst.init(None)
 
+    def __del__(self) -> None:
+        Gst.deinit()
+
     def get_appsrc(self, name: str):  # type: ignore[no-untyped-def]
         if name == "left":
             return self._appsrc_left
