@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import time
+from typing import Any, Dict, Tuple
 
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
@@ -52,20 +53,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-        os.environ["GST_DEBUG"] = "2"
-
-    # Todo: not here
-    peer_id = ""
-    if args.remote_producer_name:
-        peer_id = get_producer_id(
-            args.signaling_host, args.signaling_port, args.remote_producer_name
+def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, int]]:
+    ffcw: FFCWrapper = None
+    latency: Dict[str, int] = {}
+    if args.stream != "audio":
+        exposure_params = None
+        if args.exposure_time is not None and args.iso is not None:
+            exposure_params = (args.exposure_time, args.iso)
+        ffcw = FFCWrapper(
+            args.config,
+            rescale="720p",
+            fps=args.fps,
+            hardware_rectify=args.disable_hard_rectify,
+            hardware_sync=True,
+            usb2=args.force_usb2,
+	    exposure_params=exposure_params,
         )
 
+        if ffcw is not None:
+            for _ in range(10):
+                _, latency, _ = ffcw.get_data()
+
+    return ffcw, latency
+
+
+def configure_pipeline(args: argparse.Namespace, latency: Dict[str, int], peer_id: str) -> Tuple[GstAVPipeline, Any, Any]:
     avpipeline = GstAVPipeline(
         args.name,
         args.signaling_host,
@@ -76,26 +88,35 @@ def main() -> None:
         peer_audio_id=peer_id,
         congestion=args.net_congestion,
     )
-    avpipeline.make_pipeline()
 
-    ffcw = None
+    video_left = None
+    video_right = None
+
     if args.stream != "audio":
-        exposure_params = None
-        if args.exposure_time is not None and args.iso is not None:
-            exposure_params = (args.exposure_time, args.iso)
-
-        ffcw = FFCWrapper(
-            args.config,
-            rescale="720p",
-            fps=args.fps,
-            hardware_rectify=True,
-            hardware_sync=True,
-            usb2=args.force_usb2,
-            exposure_params=exposure_params,
-        )
-
+        avpipeline.make_pipeline(latency["left"])
         video_left = avpipeline.get_appsrc("left")
         video_right = avpipeline.get_appsrc("right")
+    else:
+        avpipeline.make_pipeline()
+
+    return avpipeline, video_left, video_right
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        os.environ["GST_DEBUG"] = "2"
+
+    # Todo: not here
+    peer_id = ""
+    if args.remote_producer_name:
+        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
+
+    ffcw, latency = configure_camera(args)
+
+    avpipeline, video_left, video_right = configure_pipeline(args, latency, peer_id)
 
     avpipeline.start()
 
@@ -103,9 +124,9 @@ def main() -> None:
         while True:
             if ffcw:
                 data, latency, _ = ffcw.get_data()
-                # print(str(latency) + " ms")
-                avpipeline.push_frame(video_left, data["left"])
-                avpipeline.push_frame(video_right, data["right"])
+                # print(str(latency) + " ns")
+                avpipeline.push_frame(video_left, data["left"], latency["left"])
+                avpipeline.push_frame(video_right, data["right"], latency["right"])
             else:
                 time.sleep(0.1)
 
