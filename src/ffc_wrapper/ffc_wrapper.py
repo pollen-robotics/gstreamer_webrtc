@@ -8,6 +8,9 @@ import depthai as dai
 import numpy as np
 import numpy.typing as npt
 
+Optional
+
+
 stringToCam = {
     "CAM_A": dai.CameraBoardSocket.CAM_A,
     "CAM_B": dai.CameraBoardSocket.CAM_B,
@@ -31,7 +34,8 @@ class FFCWrapper:
         hardware_rectify: bool = True,
         codec: str = "h264",
         usb2: bool = False,
-    ):
+        exposure_params: Optional[Tuple[int, int]] = None,  # (exposure_time, iso). None means auto
+    ) -> None:
         assert codec in ["h264", "h265"]
         assert rescale in ["no", "720p"]
 
@@ -43,6 +47,11 @@ class FFCWrapper:
         self.hardware_sync = hardware_sync
         self.hardware_rectify = hardware_rectify
         self.codec = codec
+        self.exposure_params = exposure_params
+        if self.exposure_params is not None:
+            assert self.exposure_params[0] is not None and self.exposure_params[1] is not None
+            iso = self.exposure_params[1]
+            assert 100 <= iso <= 1600
 
         self.config = json.load(open(config, "r"))
         self.cam_type = self.config["cam_type"]
@@ -81,6 +90,10 @@ class FFCWrapper:
         cam_node = pipeline.createColorCamera()
         cam_node.initialControl.setManualFocus(135)  # Needed ?
         cam_node.setBoardSocket(stringToCam[cam_id])
+        if self.exposure_params is not None:
+            self._logger.info(f"setting exposure {self.exposure_params}")
+            cam_node.initialControl.setManualExposure(*self.exposure_params)
+
         if self.cam_type == "ov" or self.cam_type == "oak":
             cam_node.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
         elif self.cam_type == "imx296":

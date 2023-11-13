@@ -53,6 +53,11 @@ def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, in
     ffcw: FFCWrapper = None
     latency: Dict[str, int] = {}
     if args.stream != "audio":
+        exposure_params = None
+        if args.exposure_time is not None and args.iso is not None:
+            exposure_params = (args.exposure_time, args.iso)
+        else:
+            logging.warning("iso and exposure time must be set. Using auto exposure.")
         ffcw = FFCWrapper(
             args.config,
             rescale="720p",
@@ -60,8 +65,10 @@ def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, in
             hardware_rectify=args.disable_hard_rectify,
             hardware_sync=True,
             usb2=args.force_usb2,
+            exposure_params=exposure_params,
         )
 
+        # fetch some frames to get the actual latency
         if ffcw is not None:
             for _ in range(10):
                 _, latency, _ = ffcw.get_data()
