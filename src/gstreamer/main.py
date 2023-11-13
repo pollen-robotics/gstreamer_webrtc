@@ -37,11 +37,6 @@ def parse_args() -> argparse.Namespace:
         help="stream selection",
         default="audiovideo",
     )
-    parser.add_argument(
-        "--remote-producer-name",
-        type=str,
-        help="name of the remote peer to get audio from",
-    )
 
     add_signaling_arguments(parser)  # signalling args
     add_common_args(parser)
@@ -103,8 +98,8 @@ def main() -> None:
 
     # Todo: not here
     peer_id = ""
-    if args.remote_producer_name:
-        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
+    if args.remote_producer_peer_name and args.remote_producer_peer_name != "aiortc-peer":  # to fix
+        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_peer_name)
 
     ffcw, latency = configure_camera(args)
 
