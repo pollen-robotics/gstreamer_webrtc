@@ -1,7 +1,9 @@
 import argparse
+import datetime
 import logging
 import os
 import time
+from typing import Any, Dict, Tuple
 
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
 from gst_signalling.aiortc_adapter import add_signaling_arguments
@@ -12,12 +14,8 @@ from gstreamer.signalling import get_producer_id
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="webrtc gstreamer producer/consumer")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable verbose mode"
-    )
-    parser.add_argument(
-        "--localnetwork", action="store_true", help="local network mode No STUN SERVER"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
+    parser.add_argument("--localnetwork", action="store_true", help="local network mode No STUN SERVER")
     parser.add_argument(
         "--net-congestion",
         action="store_true",
@@ -76,16 +74,17 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, int]]:
-    ffcw: TeleopWrapper = None
-    latency: Dict[str, int] = {}
+
+def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str, datetime.timedelta]]:
+    teleop_wrapper: TeleopWrapper = None
+    latency: Dict[str, datetime.timedelta] = {}
     if args.stream != "audio":
         exposure_params = None
         if args.exposure_time is not None and args.iso is not None:
             exposure_params = (args.exposure_time, args.iso)
         else:
             logging.warning("iso and exposure time must be set. Using auto exposure.")
-        ffcw = TeleopWrapper(
+        teleop_wrapper = TeleopWrapper(
             args.config,
             fps=args.fps,
             hardware_rectify=args.disable_hard_rectify,
@@ -94,13 +93,16 @@ def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, in
         )
 
         # fetch some frames to get the actual latency
-        if ffcw is not None:
+        if teleop_wrapper is not None:
             for _ in range(10):
-                _, latency, _ = ffcw.get_data()
+                _, latency, _ = teleop_wrapper.get_data()
 
-    return ffcw, latency
+    return teleop_wrapper, latency
 
-def configure_pipeline(args: argparse.Namespace, latency: Dict[str, int], peer_id: str) -> Tuple[GstAVPipeline, Any, Any]:
+
+def configure_pipeline(
+    args: argparse.Namespace, latency: Dict[str, datetime.timedelta], peer_id: str
+) -> Tuple[GstAVPipeline, Any, Any]:
     avpipeline = GstAVPipeline(
         args.name,
         args.signaling_host,
@@ -147,9 +149,9 @@ def main() -> None:
         while True:
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data()
-                # print(str(latency) + " ns")
-                avpipeline.push_frame(video_left, data["left"], latency["left"])
-                avpipeline.push_frame(video_right, data["right"], latency["right"])
+                # print(str(latency))
+                avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
+                avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
             else:
                 time.sleep(0.1)
 
