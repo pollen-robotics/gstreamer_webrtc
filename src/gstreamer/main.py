@@ -123,7 +123,7 @@ def configure_pipeline(
     video_right = None
 
     if args.stream != "audio":
-        avpipeline.make_pipeline(latency["left"])
+        avpipeline.make_pipeline(latency["left"].microseconds * 1000)
         video_left = avpipeline.get_appsrc("left")
         video_right = avpipeline.get_appsrc("right")
     else:
