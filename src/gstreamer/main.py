@@ -76,6 +76,54 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def configure_camera(args: argparse.Namespace) -> Tuple[FFCWrapper, Dict[str, int]]:
+    ffcw: TeleopWrapper = None
+    latency: Dict[str, int] = {}
+    if args.stream != "audio":
+        exposure_params = None
+        if args.exposure_time is not None and args.iso is not None:
+            exposure_params = (args.exposure_time, args.iso)
+        else:
+            logging.warning("iso and exposure time must be set. Using auto exposure.")
+        ffcw = TeleopWrapper(
+            args.config,
+            fps=args.fps,
+            hardware_rectify=args.disable_hard_rectify,
+            force_usb2=args.force_usb2,
+            exposure_params=exposure_params,
+        )
+
+        # fetch some frames to get the actual latency
+        if ffcw is not None:
+            for _ in range(10):
+                _, latency, _ = ffcw.get_data()
+
+    return ffcw, latency
+
+def configure_pipeline(args: argparse.Namespace, latency: Dict[str, int], peer_id: str) -> Tuple[GstAVPipeline, Any, Any]:
+    avpipeline = GstAVPipeline(
+        args.name,
+        args.signaling_host,
+        args.signaling_port,
+        stream_type=args.stream,
+        lowlatencyaudio=args.lowlatencyaudio,
+        localnetwork=args.localnetwork,
+        peer_audio_id=peer_id,
+        congestion=args.net_congestion,
+    )
+
+    video_left = None
+    video_right = None
+
+    if args.stream != "audio":
+        avpipeline.make_pipeline(latency["left"])
+        video_left = avpipeline.get_appsrc("left")
+        video_right = avpipeline.get_appsrc("right")
+    else:
+        avpipeline.make_pipeline()
+
+    return avpipeline, video_left, video_right
+
 
 def main() -> None:
     args = parse_args()
@@ -87,33 +135,11 @@ def main() -> None:
     # Todo: not here
     peer_id = ""
     if args.remote_producer_name:
-        peer_id = get_producer_id(
-            args.signaling_host, args.signaling_port, args.remote_producer_name
-        )
+        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
 
-    avpipeline = GstAVPipeline(
-        args.name,
-        args.signaling_host,
-        args.signaling_port,
-        stream_type=args.stream,
-        lowlatencyaudio=args.lowlatencyaudio,
-        localnetwork=args.localnetwork,
-        peer_audio_id=peer_id,
-        congestion=args.net_congestion,
-    )
-    avpipeline.make_pipeline()
+    teleop_wrapper, latency = configure_camera(args)
 
-    teleop_wrapper = None
-    if args.stream != "audio":
-        teleop_wrapper = TeleopWrapper(
-            args.config,
-            fps=args.fps,
-            rectify=True,
-            force_usb2=args.force_usb2,
-        )
-
-        video_left = avpipeline.get_appsrc("left")
-        video_right = avpipeline.get_appsrc("right")
+    avpipeline, video_left, video_right = configure_pipeline(args, latency, peer_id)
 
     avpipeline.start()
 
@@ -121,9 +147,9 @@ def main() -> None:
         while True:
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data()
-                # print(str(latency) + " ms")
-                avpipeline.push_frame(video_left, data["left"])
-                avpipeline.push_frame(video_right, data["right"])
+                # print(str(latency) + " ns")
+                avpipeline.push_frame(video_left, data["left"], latency["left"])
+                avpipeline.push_frame(video_right, data["right"], latency["right"])
             else:
                 time.sleep(0.1)
 

@@ -56,9 +56,7 @@ class GstAVPipeline:
         elif name == "right":
             return self._appsrc_right
         else:
-            self._logger.warning(
-                "Unknow appsrc name : f{name}. Should be left or right."
-            )
+            self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
             return None
 
     def _add_webrtcink(self):  # type: ignore[no-untyped-def]
@@ -72,22 +70,20 @@ class GstAVPipeline:
         if not self._congestion:
             webrtcsink.set_property("congestion-control", "disabled")
         signaller = webrtcsink.get_property("signaller")
-        signaller.set_property(
-            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
-        )
+        signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
         self._pipeline.add(webrtcsink)
         return webrtcsink
 
-    def _add_appsrc(self, name: str):  # type: ignore[no-untyped-def]
+    def _add_appsrc(self, name: str, cam_latency_ns: int):  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         appsrc = Gst.ElementFactory.make("appsrc")
         appsrc.set_property("name", name)
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
-        if self._stream_type == "video":
-            appsrc.set_property("do-timestamp", True)
-        else:
-            appsrc.set_property("min-latency", 30000)  # luxonis reports à 30ms latency
+        appsrc.set_property("leaky-type", 2)
+        appsrc.set_property("min-latency", cam_latency_ns)
+        appsrc.set_property("max-buffers", 100)
+        self._logger.info(f"Video latency configured to {cam_latency_ns}")
         self._pipeline.add(appsrc)
         return appsrc
 
@@ -138,7 +134,8 @@ class GstAVPipeline:
     def _add_opus_enc(self):  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         opusenc = Gst.ElementFactory.make("opusenc")
-        opusenc.set_property("audio-type", "voice")
+        opusenc.set_property("audio-type", "restricted-lowdelay")
+        opusenc.set_property("frame-size", 10)
         self._pipeline.add(opusenc)
 
         audio_caps = Gst.caps_from_string("audio/x-opus")
@@ -150,6 +147,12 @@ class GstAVPipeline:
 
         return opusenc, audio_caps_capsfilter
 
+    def _configure_webrtcbin(self, webrtcsrc) -> None:  # type: ignore[no-untyped-def]
+        if self._localnetwork:
+            webrtcbin = webrtcsrc.get_by_name("webrtcbin0")
+            # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
+            webrtcbin.set_property("latency", 50)
+
     def _webrtcsrc_pad_added_cb(self, webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
         if pad.get_name().startswith("audio"):
             webrtcechoprobe = self._add_webrtcechoprobe()  # type: ignore[no-untyped-call]
@@ -157,6 +160,8 @@ class GstAVPipeline:
             audioconvert = self._add_audioconvert()  # type: ignore[no-untyped-call]
             audioresample = self._add_audioresample()  # type: ignore[no-untyped-call]
             alsasink = self._add_alsasink(self._lowlatencyaudio)
+
+            self._configure_webrtcbin(webrtcsrc)
 
             if self._add_alsasrc is None or self._aec == "off":
                 pad.link(queue_audio_playback.get_static_pad("sink"))
@@ -198,9 +203,7 @@ class GstAVPipeline:
 
         signaller = webrtcsrc.get_property("signaller")
         signaller.set_property("producer-peer-id", peer_audio_id)
-        signaller.set_property(
-            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
-        )
+        signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
 
         webrtcsrc.connect("pad-added", self._webrtcsrc_pad_added_cb)
         self._pipeline.add(webrtcsrc)
@@ -220,27 +223,21 @@ class GstAVPipeline:
         self._pipeline.add(webrtcechoprobe)
         return webrtcechoprobe
 
-    def _set_stereo_video(self, webrtcsink) -> None:  # type: ignore[no-untyped-def]
+    def _set_stereo_video(self, webrtcsink, cam_latency: int) -> None:  # type: ignore[no-untyped-def]
         assert self._pipeline is not None
         self._logger.info("Set up stereo video pipeline")
-        self._appsrc_left = self._add_appsrc("src_left")
-        self._appsrc_right = self._add_appsrc("src_right")
-        queue_left = self._add_queue()
+        self._appsrc_left = self._add_appsrc("src_left", cam_latency)
+        self._appsrc_right = self._add_appsrc("src_right", cam_latency)
         h264parse_left = self._add_h264parse()
-        queue_right = self._add_queue()
         h264parse_right = self._add_h264parse()
 
-        if not Gst.Element.link(self._appsrc_left, queue_left):
-            self._logger.error("Failed to link appsrc -> queue")
-        if not Gst.Element.link(queue_left, h264parse_left):
-            self._logger.error("Failed to link queue -> h264parse")
+        if not Gst.Element.link(self._appsrc_left, h264parse_left):
+            self._logger.error("Failed to link appsrc -> h264parse")
         if not Gst.Element.link(h264parse_left, webrtcsink):
             self._logger.error("Failed to link h264parse -> webrtcsink")
 
-        if not Gst.Element.link(self._appsrc_right, queue_right):
-            self._logger.error("Failed to link appsrc -> queue")
-        if not Gst.Element.link(queue_right, h264parse_right):
-            self._logger.error("Failed to link queue -> h264parse")
+        if not Gst.Element.link(self._appsrc_right, h264parse_right):
+            self._logger.error("Failed to link appsrc -> h264parse")
         if not Gst.Element.link(h264parse_right, webrtcsink):
             self._logger.error("Failed to link h264parse -> webrtcsink")
 
@@ -264,19 +261,40 @@ class GstAVPipeline:
         self._logger.info("Set up audio playback pipeline")
         self._add_webrtcsrc(self._peer_audio_id)
 
-    def make_pipeline(self) -> None:
+    def make_pipeline(self, cam_latency: int = 0) -> None:
         self._pipeline = Gst.Pipeline.new()
         webrtcsink = self._add_webrtcink()  # type: ignore[no-untyped-call]
 
         if self._stream_type == "video" or self._stream_type == "audiovideo":
-            self._set_stereo_video(webrtcsink)
+            self._set_stereo_video(webrtcsink, cam_latency)
         if self._stream_type == "audio" or self._stream_type == "audiovideo":
             self._set_stereo_audio(webrtcsink)
         if self._peer_audio_id != "":
             self._set_audio_playback()
 
-    def push_frame(self, appsrc, data: npt.NDArray[np.uint8]) -> None:  # type: ignore[no-untyped-def]
+    def push_frame(self, appsrc, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:  # type: ignore[no-untyped-def]
+        clock = appsrc.get_clock()
+        if clock is None:
+            self._logger.warning("Pipeline is not playing")
+            return
+
+        basetime = appsrc.get_base_time()
+        now = clock.get_time()
+        if now < basetime:
+            self._logger.warning("Bastime is not valid")
+            return
+
+        time = now - basetime
+        if latency_ns > time:
+            # This frame was captured before the pipeline was started
+            # It could be a good time to request a keyframe
+            self._logger.warning("Skipping early captured frame")
+            return
+
         buf = Gst.Buffer.new_wrapped(data.tobytes())
+        buf.pts = Gst.CLOCK_TIME_NONE
+        buf.dts = time - latency_ns
+
         appsrc.emit("push-buffer", buf)
 
     def start(self) -> None:
@@ -309,12 +327,7 @@ class GstAVPipeline:
         elif t == Gst.MessageType.STATE_CHANGED:
             if isinstance(message.src, Gst.Pipeline):
                 old_state, new_state, pending_state = message.parse_state_changed()
-                self._logger.info(
-                    (
-                        "Pipeline state changed from %s to %s."
-                        % (old_state.value_nick, new_state.value_nick)
-                    )
-                )
+                self._logger.info(("Pipeline state changed from %s to %s." % (old_state.value_nick, new_state.value_nick)))
                 if old_state.value_nick == "paused" and new_state.value_nick == "ready":
                     self._logger.info("stopping bus message loop")
                     return False
@@ -323,9 +336,7 @@ class GstAVPipeline:
                 try:
                     self._pipeline.recalculate_latency()
                 except Exception as e:
-                    self._logger.warning(
-                        "failed to recalculate warning, exception: %s" % str(e)
-                    )
+                    self._logger.warning("failed to recalculate warning, exception: %s" % str(e))
 
         return True
 
