@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Manual iso (must also set exposure_time manually). If neither are set, auto parameters are used.",
     )
+    parser.add_argument(
+        "--disable-hard-rectify",
+        action="store_false",
+        help="Disable hardware rectification",
+    )
 
     add_signaling_arguments(parser)  # signalling args
 
@@ -87,7 +92,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
         teleop_wrapper = TeleopWrapper(
             args.config,
             fps=args.fps,
-            hardware_rectify=args.disable_hard_rectify,
+            rectify=args.disable_hard_rectify,
             force_usb2=args.force_usb2,
             exposure_params=exposure_params,
         )
