@@ -68,6 +68,7 @@ class GstAVPipeline:
         meta_structure = Gst.Structure.new_empty("meta")
         meta_structure.set_value("name", self._name)
         webrtcsink.set_property("meta", meta_structure)
+        webrtcsink.set_property("do-retransmission", False)  # lost packets will arrive too late anyway
         if self._localnetwork:
             webrtcsink.set_property("stun-server", None)
         if not self._congestion:
