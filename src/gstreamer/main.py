@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str, datetime.timedelta]]:
+    logging.info("Configuring cameras...")
     teleop_wrapper: TeleopWrapper = None
     latency: Dict[str, datetime.timedelta] = {}
     if args.stream != "audio":
@@ -108,6 +109,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
 def configure_pipeline(
     args: argparse.Namespace, latency: Dict[str, datetime.timedelta], peer_id: str
 ) -> Tuple[GstAVPipeline, Any, Any]:
+    logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
         args.name,
         args.signaling_host,
@@ -139,6 +141,8 @@ def main() -> None:
         logging.basicConfig(level=logging.DEBUG)
         os.environ["GST_DEBUG"] = "2"
 
+    logging.info("Starting teleoperation")
+
     # Todo: not here
     peer_id = ""
     if args.remote_producer_name:
@@ -164,6 +168,8 @@ def main() -> None:
         logging.info("User exit")
     finally:
         avpipeline.stop()
+
+    logging.info("Closing teleoperation")
 
 
 if __name__ == "__main__":
