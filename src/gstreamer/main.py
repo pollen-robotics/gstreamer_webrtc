@@ -87,7 +87,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
         exposure_params = None
         if args.exposure_time is not None and args.iso is not None:
             exposure_params = (args.exposure_time, args.iso)
-        else:
+        elif (args.exposure_time is None and args.iso is not None) or (args.exposure_time is not None and args.iso is None):
             logging.warning("iso and exposure time must be set. Using auto exposure.")
         teleop_wrapper = TeleopWrapper(
             args.config,
