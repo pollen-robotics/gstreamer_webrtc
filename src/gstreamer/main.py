@@ -98,7 +98,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
             exposure_params=exposure_params,
         )
 
-        logging.info("Ccompute camera latency...")
+        logging.info("Compute camera latency...")
         # fetch some frames to get the actual latency
         if teleop_wrapper is not None:
             for _ in range(50):
