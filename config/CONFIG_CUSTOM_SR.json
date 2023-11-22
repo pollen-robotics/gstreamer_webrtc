@@ -5,5 +5,5 @@
     },
     "inverted": false,
     "fisheye": true,
-    "mono": false
+    "mono": true
 }

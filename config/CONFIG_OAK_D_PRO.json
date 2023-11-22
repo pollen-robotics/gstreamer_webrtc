@@ -4,6 +4,6 @@
         "CAM_C": "left"
     },
     "inverted": false,
-    "fisheye": true,
-    "mono": false
+    "fisheye": false,
+    "mono": true
 }

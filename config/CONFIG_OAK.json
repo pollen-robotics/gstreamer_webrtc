@@ -1,7 +1,0 @@
-{
-    "cam_type": "oak",
-    "sockets": {
-        "CAM_B": "right",
-        "CAM_C": "left"
-    }
-}
