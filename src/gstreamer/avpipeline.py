@@ -1,13 +1,12 @@
 import logging
 import threading
-import time
 
 import gi
 import numpy as np
 
 gi.require_version("Gst", "1.0")
 import numpy.typing as npt
-from gi.repository import Gst
+from gi.repository import GLib, Gst
 
 # note about mypy: PyGObject not natively supported. errors explicitely ignored.
 
@@ -42,13 +41,16 @@ class GstAVPipeline:
         self._aec = aec
 
         self._thread_bus_calls = threading.Thread(target=self.handle_bus_calls)
-        self._thread_running = False
+        self._loop = GLib.MainLoop()
 
         # kept for insering webrtcdsp in between
         self._alsasrc = None
         self._queue_audio = None
 
         Gst.init(None)
+
+    def __del__(self) -> None:
+        Gst.deinit()
 
     def get_appsrc(self, name: str):  # type: ignore[no-untyped-def]
         if name == "left":
@@ -65,6 +67,7 @@ class GstAVPipeline:
         meta_structure = Gst.Structure.new_empty("meta")
         meta_structure.set_value("name", self._name)
         webrtcsink.set_property("meta", meta_structure)
+        webrtcsink.set_property("do-retransmission", False)  # lost packets will arrive too late anyway
         if self._localnetwork:
             webrtcsink.set_property("stun-server", None)
         if not self._congestion:
@@ -194,6 +197,8 @@ class GstAVPipeline:
                 webrtcdsp.sync_state_with_parent()
                 self._queue_audio.sync_state_with_parent()
 
+            GLib.timeout_add_seconds(5, self.dump_latency)
+
     def _add_webrtcsrc(self, peer_audio_id: str) -> None:
         assert self._pipeline is not None
         webrtcsrc = Gst.ElementFactory.make("webrtcsrc")
@@ -297,6 +302,12 @@ class GstAVPipeline:
 
         appsrc.emit("push-buffer", buf)
 
+    def dump_latency(self) -> None:
+        if self._pipeline is not None:
+            query = Gst.Query.new_latency()
+            self._pipeline.query(query)
+            self._logger.info(f"Pipeline latency {query.parse_latency()}")
+
     def start(self) -> None:
         if self._pipeline is not None:
             ret = self._pipeline.set_state(Gst.State.PLAYING)
@@ -304,6 +315,7 @@ class GstAVPipeline:
                 self._logger.error(f"Failed to transition pipeline to PLAYING: {ret}")
 
             self._thread_bus_calls.start()
+            GLib.timeout_add_seconds(10, self.dump_latency)
         else:
             self._logger.warning("Pipeline not created. Nothing to do.")
 
@@ -312,24 +324,26 @@ class GstAVPipeline:
             self._pipeline.set_state(Gst.State.NULL)
             self._logger.info("Pipeline stopped")
         if self._thread_bus_calls:
-            self._thread_running = False
+            self._loop.quit()
             self._thread_bus_calls.join()
 
-    def bus_call(self, message) -> bool:  # type: ignore[no-untyped-def]
-        t = message.type
+    def bus_message_cb(self, bus, msg, loop) -> bool:  # type: ignore[no-untyped-def]
+        t = msg.type
         if t == Gst.MessageType.EOS:
             self._logger.error("End-of-stream\n")
             return False
         elif t == Gst.MessageType.ERROR:
-            err, debug = message.parse_error()
+            err, debug = msg.parse_error()
             self._logger.error("Error: %s: %s\n" % (err, debug))
+            loop.quit()
             return False
         elif t == Gst.MessageType.STATE_CHANGED:
-            if isinstance(message.src, Gst.Pipeline):
-                old_state, new_state, pending_state = message.parse_state_changed()
+            if isinstance(msg.src, Gst.Pipeline):
+                old_state, new_state, pending_state = msg.parse_state_changed()
                 self._logger.info(("Pipeline state changed from %s to %s." % (old_state.value_nick, new_state.value_nick)))
                 if old_state.value_nick == "paused" and new_state.value_nick == "ready":
                     self._logger.info("stopping bus message loop")
+                    loop.quit()
                     return False
         elif t == Gst.MessageType.LATENCY:
             if self._pipeline:
@@ -337,19 +351,15 @@ class GstAVPipeline:
                     self._pipeline.recalculate_latency()
                 except Exception as e:
                     self._logger.warning("failed to recalculate warning, exception: %s" % str(e))
-
         return True
 
     def handle_bus_calls(self) -> None:
         self._logger.info("starting bus call loop")
-        self._thread_running = True
-        bus = None
-        while self._thread_running:
-            if self._pipeline is not None:
-                bus = self._pipeline.get_bus()
-            if bus is not None:
-                while bus.have_pending():
-                    msg = bus.pop()
-                    if not self.bus_call(msg):
-                        self._thread_running = False
-            time.sleep(0.1)
+
+        if self._pipeline is not None:
+            bus = self._pipeline.get_bus()
+            bus.add_watch(GLib.PRIORITY_DEFAULT, self.bus_message_cb, self._loop)
+            self._loop.run()
+            bus.remove_watch()
+        else:
+            self._logger.warning("pipeline is None")
