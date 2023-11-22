@@ -197,6 +197,8 @@ class GstAVPipeline:
                 webrtcdsp.sync_state_with_parent()
                 self._queue_audio.sync_state_with_parent()
 
+            GLib.timeout_add_seconds(5, self.dump_latency)
+
     def _add_webrtcsrc(self, peer_audio_id: str) -> None:
         assert self._pipeline is not None
         webrtcsrc = Gst.ElementFactory.make("webrtcsrc")
