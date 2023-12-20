@@ -218,7 +218,7 @@ class GstAVPipeline:
         webrtcdsp = Gst.ElementFactory.make("webrtcdsp")
         if self._aec == "strong":
             webrtcdsp.set_property("delay-agnostic", True)
-            webrtcdsp.set_property("echo-suppression", 3)
+            webrtcdsp.set_property("echo-suppression-level", 2)
         self._pipeline.add(webrtcdsp)
         return webrtcdsp
 
