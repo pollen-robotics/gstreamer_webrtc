@@ -121,7 +121,7 @@ def configure_pipeline(
         localnetwork=args.localnetwork,
         peer_audio_id=peer_id,
         congestion=args.net_congestion,
-        aec=args.aec_level
+        aec=args.aec_level,
     )
 
     video_left = None
