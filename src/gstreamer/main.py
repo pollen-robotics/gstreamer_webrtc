@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aec-level",
         choices=["off", "normal", "strong"],
+        default="normal",
         help="set accoustic echo cancellation level",
     )
     parser.add_argument(
@@ -120,6 +121,7 @@ def configure_pipeline(
         localnetwork=args.localnetwork,
         peer_audio_id=peer_id,
         congestion=args.net_congestion,
+        aec=args.aec_level
     )
 
     video_left = None
