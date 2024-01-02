@@ -45,12 +45,14 @@ class GstAVPipeline:
         self._congestion = congestion
         self._aec = aec
 
-        self._thread_bus_calls = threading.Thread(target=self.handle_bus_calls)
+        self._thread_bus_calls = threading.Thread(target=self.handle_bus_calls, daemon=True)
         self._loop = GLib.MainLoop()
 
         self._thread_remote_producer = threading.Thread(target=self.find_remote_producer, daemon=True)
         if self._peer_audio_name is not None:
             self._thread_remote_producer.start()
+
+        self._mutex = threading.Lock()
 
         # kept for insering webrtcdsp in between
         self._alsasrc = None
@@ -167,6 +169,7 @@ class GstAVPipeline:
 
     def _webrtcsrc_pad_added_cb(self, webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
         if pad.get_name().startswith("audio"):
+            self._logger.info("Connecting audio client")
             webrtcechoprobe = self._add_webrtcechoprobe()  # type: ignore[no-untyped-call]
             queue_audio_playback = self._add_queue()  # type: ignore[no-untyped-call]
             audioconvert = self._add_audioconvert()  # type: ignore[no-untyped-call]
@@ -209,6 +212,7 @@ class GstAVPipeline:
             GLib.timeout_add_seconds(5, self.dump_latency)
 
     def _add_webrtcsrc(self, peer_audio_id: str) -> None:
+        self._logger.debug("Add webrtc src")
         assert self._pipeline is not None
         webrtcsrc = Gst.ElementFactory.make("webrtcsrc")
 
@@ -317,23 +321,26 @@ class GstAVPipeline:
             self._logger.info(f"Pipeline latency {query.parse_latency()}")
 
     def start(self) -> None:
-        if self._pipeline is not None:
-            ret = self._pipeline.set_state(Gst.State.PLAYING)
-            if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
-                self._logger.error(f"Failed to transition pipeline to PLAYING: {ret}")
+        with self._mutex:
+            if self._pipeline is not None:
+                ret = self._pipeline.set_state(Gst.State.PLAYING)
+                if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
+                    self._logger.error(f"Failed to transition pipeline to PLAYING: {ret}")
 
-            self._thread_bus_calls.start()
-            GLib.timeout_add_seconds(10, self.dump_latency)
-        else:
-            self._logger.warning("Pipeline not created. Nothing to do.")
+                if not self._thread_bus_calls.is_alive():
+                    self._thread_bus_calls.start()
+                GLib.timeout_add_seconds(10, self.dump_latency)
+            else:
+                self._logger.warning("Pipeline not created. Nothing to do.")
 
     def stop(self) -> None:
-        if self._pipeline is not None:
-            self._pipeline.set_state(Gst.State.NULL)
-            self._logger.info("Pipeline stopped")
-        if self._thread_bus_calls:
-            self._loop.quit()
-            self._thread_bus_calls.join()
+        with self._mutex:
+            if self._pipeline is not None:
+                self._pipeline.set_state(Gst.State.NULL)
+                self._logger.info("Pipeline stopped")
+            if self._thread_bus_calls:
+                self._loop.quit()
+                self._thread_bus_calls.join()
 
     def bus_message_cb(self, bus, msg, loop) -> bool:  # type: ignore[no-untyped-def]
         t = msg.type
@@ -373,7 +380,6 @@ class GstAVPipeline:
             self._logger.warning("pipeline is None")
 
     def find_remote_producer(self) -> None:
-        # peer_id = get_producer_id(self._signalling_host, self._signalling_port, self._peer_audio_name)
         peer_audio_id = ""
 
         while True:
@@ -381,7 +387,17 @@ class GstAVPipeline:
                 peer_audio_id = utils.find_producer_peer_id_by_name(
                     self._signalling_host, self._signalling_port, self._peer_audio_name
                 )
-                self._logger.info(f"found peer id is {peer_audio_id}")
+                self._logger.info(f"Found peer {self._peer_audio_name} with id {peer_audio_id}")
                 break
             except KeyError:
                 time.sleep(3)
+
+        while self._pipeline is None:
+            self._logger.debug("wait for pipe to be ready")
+            time.sleep(1)
+
+        if self._pipeline is not None:
+            with self._mutex:
+                self._pipeline.set_state(Gst.State.PAUSED)
+                self._add_webrtcsrc(peer_audio_id)
+            self.start()
