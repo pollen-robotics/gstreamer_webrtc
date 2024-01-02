@@ -10,8 +10,7 @@ from typing import Optional
 
 import numpy.typing as npt
 from gi.repository import GLib, Gst
-
-from gstreamer.signalling import utils
+from gst_signalling import utils
 
 # note about mypy: PyGObject not natively supported. errors explicitely ignored.
 
@@ -283,11 +282,6 @@ class GstAVPipeline:
             self._set_stereo_video(webrtcsink, cam_latency)
         if self._stream_type == "audio" or self._stream_type == "audiovideo":
             self._set_stereo_audio(webrtcsink)
-        """            
-        if self._peer_audio_id is not None:
-            self._logger.info("Set up audio playback pipeline")
-            self._add_webrtcsrc(self._peer_audio_id)
-        """
 
     def push_frame(self, appsrc, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:  # type: ignore[no-untyped-def]
         clock = appsrc.get_clock()

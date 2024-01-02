@@ -9,7 +9,6 @@ from depthai_wrappers.teleop_wrapper import TeleopWrapper
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
 from gstreamer.avpipeline import GstAVPipeline
-from gstreamer.signalling import get_producer_id
 
 
 def parse_args() -> argparse.Namespace:
