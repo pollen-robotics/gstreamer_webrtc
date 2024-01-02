@@ -5,8 +5,13 @@ import gi
 import numpy as np
 
 gi.require_version("Gst", "1.0")
+import time
+from typing import Optional
+
 import numpy.typing as npt
 from gi.repository import GLib, Gst
+
+from gstreamer.signalling import utils
 
 # note about mypy: PyGObject not natively supported. errors explicitely ignored.
 
@@ -20,7 +25,7 @@ class GstAVPipeline:
         stream_type: str,
         lowlatencyaudio: bool = True,
         localnetwork: bool = False,
-        peer_audio_id: str = "",
+        peer_audio_name: Optional[str] = None,
         congestion: bool = True,
         aec: str = "normal",
     ):
@@ -36,12 +41,16 @@ class GstAVPipeline:
         self._appsrc_right = None
         self._lowlatencyaudio = lowlatencyaudio
         self._localnetwork = localnetwork
-        self._peer_audio_id = peer_audio_id
+        self._peer_audio_name = peer_audio_name
         self._congestion = congestion
         self._aec = aec
 
         self._thread_bus_calls = threading.Thread(target=self.handle_bus_calls)
         self._loop = GLib.MainLoop()
+
+        self._thread_remote_producer = threading.Thread(target=self.find_remote_producer, daemon=True)
+        if self._peer_audio_name is not None:
+            self._thread_remote_producer.start()
 
         # kept for insering webrtcdsp in between
         self._alsasrc = None
@@ -262,10 +271,6 @@ class GstAVPipeline:
         if not Gst.Element.link(audio_caps, webrtcsink):
             self._logger.error("Failed to link caps -> webrtcsink")
 
-    def _set_audio_playback(self) -> None:
-        self._logger.info("Set up audio playback pipeline")
-        self._add_webrtcsrc(self._peer_audio_id)
-
     def make_pipeline(self, cam_latency: int = 0) -> None:
         self._pipeline = Gst.Pipeline.new()
         webrtcsink = self._add_webrtcink()  # type: ignore[no-untyped-call]
@@ -274,8 +279,11 @@ class GstAVPipeline:
             self._set_stereo_video(webrtcsink, cam_latency)
         if self._stream_type == "audio" or self._stream_type == "audiovideo":
             self._set_stereo_audio(webrtcsink)
-        if self._peer_audio_id != "":
-            self._set_audio_playback()
+        """            
+        if self._peer_audio_id is not None:
+            self._logger.info("Set up audio playback pipeline")
+            self._add_webrtcsrc(self._peer_audio_id)
+        """
 
     def push_frame(self, appsrc, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:  # type: ignore[no-untyped-def]
         clock = appsrc.get_clock()
@@ -363,3 +371,17 @@ class GstAVPipeline:
             bus.remove_watch()
         else:
             self._logger.warning("pipeline is None")
+
+    def find_remote_producer(self) -> None:
+        # peer_id = get_producer_id(self._signalling_host, self._signalling_port, self._peer_audio_name)
+        peer_audio_id = ""
+
+        while True:
+            try:
+                peer_audio_id = utils.find_producer_peer_id_by_name(
+                    self._signalling_host, self._signalling_port, self._peer_audio_name
+                )
+                self._logger.info(f"found peer id is {peer_audio_id}")
+                break
+            except KeyError:
+                time.sleep(3)

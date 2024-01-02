@@ -9,6 +9,7 @@ def get_producer_id(host: str, port: int, producer_name: str, timeout: int = 100
 
     while i < timeout:
         # ToDo: create a client at each iteration. May be not optimal
+        """
         producers = utils.get_producer_list(host=host, port=port)
 
         if producers:
@@ -21,8 +22,11 @@ def get_producer_id(host: str, port: int, producer_name: str, timeout: int = 100
             logging.warning("Target producer not found.")
         else:
             logging.info("List received, no producers.")
-
-        time.sleep(1)
-        i += 1
+        """
+        try:
+            return str(utils.find_producer_peer_id_by_name(host=host, port=port, name=producer_name))
+        except KeyError:
+            time.sleep(1)
+            i += 1
 
     return str("")

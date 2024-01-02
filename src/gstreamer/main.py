@@ -119,7 +119,7 @@ def configure_pipeline(
         stream_type=args.stream,
         lowlatencyaudio=args.lowlatencyaudio,
         localnetwork=args.localnetwork,
-        peer_audio_id=peer_id,
+        peer_audio_name=peer_id,
         congestion=args.net_congestion,
         aec=args.aec_level,
     )
@@ -145,15 +145,17 @@ def main() -> None:
         os.environ["GST_DEBUG"] = "2"
 
     logging.info("Starting teleoperation")
+    logging.info("ZAO")
 
     # Todo: not here
+    """
     peer_id = ""
     if args.remote_producer_name:
         peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
-
+    """
     teleop_wrapper, latency = configure_camera(args)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency, peer_id)
+    avpipeline, video_left, video_right = configure_pipeline(args, latency, args.remote_producer_name)
 
     avpipeline.start()
 
