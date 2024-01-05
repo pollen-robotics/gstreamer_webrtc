@@ -119,7 +119,7 @@ class GstAVPipeline:
         alsasrc = Gst.ElementFactory.make("alsasrc")
         if lowlatencydevice:
             alsasrc.set_property("device", "lowlatencysrc")
-        alsasrc.set_property("buffer-time", 30000)
+        alsasrc.set_property("buffer-time", 20000)
         alsasrc.set_property("latency-time", 10000)
         self._pipeline.add(alsasrc)
         return alsasrc
@@ -129,7 +129,7 @@ class GstAVPipeline:
         alsasink = Gst.ElementFactory.make("alsasink")
         if lowlatencydevice:
             alsasink.set_property("device", "lowlatencysink")
-        alsasink.set_property("buffer-time", 30000)
+        alsasink.set_property("buffer-time", 20000)
         alsasink.set_property("latency-time", 10000)
         self._pipeline.add(alsasink)
         return alsasink
