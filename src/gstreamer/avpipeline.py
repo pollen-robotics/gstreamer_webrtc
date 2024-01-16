@@ -3,13 +3,8 @@ import logging
 import gi
 import numpy as np
 
-# import threading
-
-
 gi.require_version("Gst", "1.0")
 import asyncio
-
-# import time
 from typing import Any, Coroutine, Dict, List, Optional, Tuple
 
 import numpy.typing as npt

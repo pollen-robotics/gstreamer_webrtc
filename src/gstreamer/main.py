@@ -3,9 +3,13 @@ import asyncio
 import datetime
 import logging
 import os
-from typing import Any, Dict, Tuple
+from typing import Dict, Optional, Tuple
 
+import gi
+
+gi.require_version("Gst", "1.0")
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
+from gi.repository import Gst
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
 from gstreamer.avpipeline import GstAVPipeline
@@ -109,7 +113,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
 
 def configure_pipeline(
     args: argparse.Namespace, latency: Dict[str, datetime.timedelta], peer_id: str
-) -> Tuple[GstAVPipeline, Any, Any]:
+) -> Tuple[GstAVPipeline, Optional[Gst.Element], Optional[Gst.Element]]:
     logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
         args.name,
