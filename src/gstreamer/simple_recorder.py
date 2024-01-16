@@ -24,11 +24,14 @@ class GstRecorder:
         signaller.set_property("producer-peer-id", peer_id)
         signaller.set_property("uri", f"ws://{signalling_host}:{signalling_port}")
 
-    def webrtcsrc_pad_added_cb(self, webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
-        if pad.get_name().startswith("video"):
+    def webrtcsrc_pad_added_cb(self, webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
+        if pad.get_name().startswith("video"):  # type: ignore[union-attr]
             videodepay = Gst.ElementFactory.make("rtph264depay")
+            assert videodepay is not None
             gdppay = Gst.ElementFactory.make("gdppay")
+            assert gdppay is not None
             filesink = Gst.ElementFactory.make("filesink")
+            assert filesink is not None
             filesink.set_property("location", f"{pad.get_name()}.gdp")
 
             self.pipeline.add(videodepay)
@@ -36,7 +39,7 @@ class GstRecorder:
             self.pipeline.add(filesink)
             videodepay.link(gdppay)
             gdppay.link(filesink)
-            pad.link(videodepay.get_static_pad("sink"))
+            pad.link(videodepay.get_static_pad("sink"))  # type: ignore[arg-type]
 
             videodepay.sync_state_with_parent()
             gdppay.sync_state_with_parent()
@@ -45,7 +48,7 @@ class GstRecorder:
     def __del__(self) -> None:
         Gst.deinit()
 
-    def get_bus(self):  # type: ignore[no-untyped-def]
+    def get_bus(self) -> Gst.Bus:
         return self.pipeline.get_bus()
 
     def record(self) -> None:
@@ -61,7 +64,7 @@ class GstRecorder:
         self.pipeline.set_state(Gst.State.NULL)
 
 
-def process_msg(bus) -> bool:  # type: ignore[no-untyped-def]
+def process_msg(bus: Gst.Bus) -> bool:
     msg = bus.timed_pop_filtered(10 * Gst.MSECOND, Gst.MessageType.ANY)
     if msg:
         if msg.type == Gst.MessageType.ERROR:
@@ -93,7 +96,7 @@ def main() -> None:
     recorder.record()
 
     # Wait until error or EOS
-    bus = recorder.get_bus()  # type: ignore[no-untyped-call]
+    bus = recorder.get_bus()
     try:
         while True:
             if not process_msg(bus):
