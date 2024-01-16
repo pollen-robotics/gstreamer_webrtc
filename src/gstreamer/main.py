@@ -1,8 +1,8 @@
 import argparse
+import asyncio
 import datetime
 import logging
 import os
-import time
 from typing import Any, Dict, Tuple
 
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
@@ -136,27 +136,14 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-def main() -> None:
-    args = parse_args()
-
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-        os.environ["GST_DEBUG"] = "2"
-
+async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
-    logging.info("ZAO")
 
-    # Todo: not here
-    """
-    peer_id = ""
-    if args.remote_producer_name:
-        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
-    """
     teleop_wrapper, latency = configure_camera(args)
 
     avpipeline, video_left, video_right = configure_pipeline(args, latency, args.remote_producer_name)
 
-    avpipeline.start()
+    await avpipeline.start()
 
     try:
         while True:
@@ -165,15 +152,30 @@ def main() -> None:
                 # print(str(latency))
                 avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
                 avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                # get_data is blocking. giving space to async methods
+                await asyncio.sleep(0)
             else:
-                time.sleep(0.1)
+                #    time.sleep(0.1)
+                # audio mode. work done in gstreamer threads
+                await asyncio.sleep(1)
 
     except KeyboardInterrupt:
         logging.info("User exit")
     finally:
-        avpipeline.stop()
+        await avpipeline.stop()
 
     logging.info("Closing teleoperation")
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        os.environ["GST_DEBUG"] = "2"
+
+    asyncio.run(main_loop(args))
+    # main_loop(args)
 
 
 if __name__ == "__main__":
