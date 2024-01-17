@@ -42,16 +42,12 @@ class GstAVPipeline:
         self._congestion = congestion
         self._aec = aec
 
-        # self._thread_bus_calls = threading.Thread(target=self._handle_bus_calls, daemon=True)
         self._coro_bus_calls: Optional[Coroutine[Any, Any, Any]] = None
-        # self._bus_calls_task = None
         self._loop = GLib.MainLoop()
 
-        # self._thread_remote_producer = threading.Thread(target=self.find_remote_producer, daemon=True)
         self._peer_audio_listener: Optional[GstSignallingListener] = None
         self._listener_task = None
         if self._peer_audio_name is not None:
-            # self._thread_remote_producer.start()
             self._peer_audio_listener = GstSignallingListener(
                 host=signalling_host,
                 port=signalling_port,
@@ -60,14 +56,11 @@ class GstAVPipeline:
             self._peer_audio_listener.on("PeerStatusChanged", self._handle_peer_status_changed)
             self._listener_task = asyncio.create_task(self._peer_audio_listener.serve4ever())
 
-        # self._mutex = threading.Lock()
         self._mutex = asyncio.Lock()
 
-        # kept for insering webrtcdsp in between
-        self._alsasrc: Optional[Gst.Element] = None
-        self._queue_audio: Optional[Gst.Element] = None
         self._webrtcdsp: Optional[Gst.Element] = None
         self._components_webrtcsrc: List[Gst.Element] = []
+        self._webrtcsrc_count: int = -1
 
         Gst.init(None)
 
@@ -101,18 +94,8 @@ class GstAVPipeline:
             webrtcsink.set_property("congestion-control", "disabled")
         self._signaller = webrtcsink.get_property("signaller")
         self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
-        self._signaller.connect("producer-added", self._producer_added_cb)
-        self._signaller.connect("producer-removed", self._producer_removed_cb)
         self._pipeline.add(webrtcsink)
         return webrtcsink
-
-    def _producer_added_cb(self, producer_id, meta) -> None:  # type: ignore[no-untyped-def]
-        self._logger.debug(" *** Producer added")
-        self._logger.debug(f" {producer_id} {meta}")
-
-    def _producer_removed_cb(self, obj, producer_id, meta) -> None:  # type: ignore[no-untyped-def]
-        self._logger.debug(" *** Producer removed")
-        self._logger.debug(f" {producer_id} {meta}")
 
     def _add_appsrc(self, name: str, cam_latency_ns: int) -> Gst.Element:
         assert self._pipeline is not None
@@ -162,8 +145,8 @@ class GstAVPipeline:
         assert alsasrc is not None
         if lowlatencydevice:
             alsasrc.set_property("device", "lowlatencysrc")
-        # alsasrc.set_property("buffer-time", 30000)
-        # alsasrc.set_property("latency-time", 10000)
+        alsasrc.set_property("buffer-time", 30000)
+        alsasrc.set_property("latency-time", 10000)
         self._pipeline.add(alsasrc)
         return alsasrc
 
@@ -173,8 +156,8 @@ class GstAVPipeline:
         assert alsasink is not None
         if lowlatencydevice:
             alsasink.set_property("device", "lowlatencysink")
-        # alsasink.set_property("buffer-time", 30000)
-        # alsasink.set_property("latency-time", 10000)
+        alsasink.set_property("buffer-time", 30000)
+        alsasink.set_property("latency-time", 10000)
         self._pipeline.add(alsasink)
         return alsasink
 
@@ -198,8 +181,10 @@ class GstAVPipeline:
         return opusenc, audio_caps_capsfilter
 
     def _configure_webrtcbin(self, webrtcsrc: Gst.Element) -> None:
-        if self._localnetwork:
-            webrtcbin = webrtcsrc.get_by_name("webrtcbin0")  # type: ignore[attr-defined]
+        if self._localnetwork and isinstance(webrtcsrc, Gst.Bin):
+            webrtcbin_name = "webrtcbin" + str(self._webrtcsrc_count)
+            webrtcbin = webrtcsrc.get_by_name(webrtcbin_name)
+            assert webrtcbin is not None
             # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
             webrtcbin.set_property("latency", 50)
 
@@ -229,6 +214,12 @@ class GstAVPipeline:
                 if not Gst.Element.link(webrtcechoprobe, queue_audio_playback):
                     self._logger.error("Failed to link webrtcechoprobe -> queue")
 
+                assert self._webrtcdsp is not None
+                self._webrtcdsp.set_property("echo-cancel", True)
+                if self._aec == "strong":
+                    self._webrtcdsp.set_property("delay-agnostic", True)
+                    self._webrtcdsp.set_property("echo-suppression-level", 2)
+
             queue_audio_playback.sync_state_with_parent()
 
             if not Gst.Element.link(queue_audio_playback, audioconvert):
@@ -241,17 +232,6 @@ class GstAVPipeline:
                 self._logger.error("Failed to link audioresample -> alsasink")
             alsasink.sync_state_with_parent()
 
-            if self._alsasrc is not None and self._queue_audio is not None and self._aec != "off":
-                self._webrtcdsp = self._add_webrtcdsp()
-                self._components_webrtcsrc.append(self._webrtcdsp)
-                self._alsasrc.unlink(self._queue_audio)
-                if not Gst.Element.link(self._alsasrc, self._webrtcdsp):
-                    self._logger.error("Failed to link alsasrc -> webrtdsp")
-                if not Gst.Element.link(self._webrtcdsp, self._queue_audio):
-                    self._logger.error("Failed to link webrtcdsp -> queue")
-                self._webrtcdsp.sync_state_with_parent()
-                self._queue_audio.sync_state_with_parent()
-
             GLib.timeout_add_seconds(5, self.dump_latency)
 
     def _add_webrtcsrc(self, peer_audio_id: str) -> None:
@@ -259,6 +239,7 @@ class GstAVPipeline:
         assert self._pipeline is not None
         webrtcsrc = Gst.ElementFactory.make("webrtcsrc")
         assert webrtcsrc is not None
+        self._webrtcsrc_count += 1
 
         if self._localnetwork:
             webrtcsrc.set_property("stun-server", None)
@@ -276,6 +257,8 @@ class GstAVPipeline:
         assert self._pipeline is not None
         webrtcdsp = Gst.ElementFactory.make("webrtcdsp")
         assert webrtcdsp is not None
+        # activated if webrtcsrc connects
+        webrtcdsp.set_property("echo-cancel", False)
         if self._aec == "strong":
             webrtcdsp.set_property("delay-agnostic", True)
             webrtcdsp.set_property("echo-suppression-level", 2)
@@ -310,13 +293,16 @@ class GstAVPipeline:
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         assert self._pipeline is not None
         self._logger.info("Set up stereo audio pipeline")
-        self._alsasrc = self._add_alsasrc(self._lowlatencyaudio)
-        self._queue_audio = self._add_queue()
+        alsasrc = self._add_alsasrc(self._lowlatencyaudio)
+        self._webrtcdsp = self._add_webrtcdsp()
+        queue_audio = self._add_queue()
         opusenc, audio_caps = self._add_opus_enc()
 
-        if not Gst.Element.link(self._alsasrc, self._queue_audio):
-            self._logger.error("Failed to link alsasrc -> queue")
-        if not Gst.Element.link(self._queue_audio, opusenc):
+        if not Gst.Element.link(alsasrc, self._webrtcdsp):
+            self._logger.error("Failed to link alsasrc -> webrtdsp")
+        if not Gst.Element.link(self._webrtcdsp, queue_audio):
+            self._logger.error("Failed to link webrtcdsp -> queue")
+        if not Gst.Element.link(queue_audio, opusenc):
             self._logger.error("Failed to link queue -> opusenc")
         if not Gst.Element.link(opusenc, audio_caps):
             self._logger.error("Failed to link opusenc -> caps")
@@ -331,6 +317,10 @@ class GstAVPipeline:
             self._set_stereo_video(webrtcsink, cam_latency)
         if self._stream_type == "audio" or self._stream_type == "audiovideo":
             self._set_stereo_audio(webrtcsink)
+
+        ret = self._pipeline.set_state(Gst.State.READY)
+        if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
+            self._logger.error(f"Failed to transition pipeline to READY: {ret}")
 
     def push_frame(self, appsrc: Gst.Element, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:
         clock = appsrc.get_clock()
@@ -370,10 +360,6 @@ class GstAVPipeline:
                 if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
                     self._logger.error(f"Failed to transition pipeline to PLAYING: {ret}")
 
-                """
-                if not self._thread_bus_calls.is_alive():
-                    self._thread_bus_calls.start()
-                """
                 if self._coro_bus_calls is None:
                     self._coro_bus_calls = asyncio.to_thread(self._handle_bus_calls)
 
@@ -386,16 +372,10 @@ class GstAVPipeline:
             if self._pipeline is not None:
                 self._pipeline.set_state(Gst.State.NULL)
                 self._logger.info("Pipeline stopped")
-            """
-            if self._thread_bus_calls:
-                self._loop.quit()
-                self._thread_bus_calls.join()
-            """
             if self._coro_bus_calls:
                 self._loop.quit()
-                await self._coro_bus_calls
+                self._coro_bus_calls.close()
                 self._coro_bus_calls = None
-                # self._bus_calls_task.cancel()
         self._logger.info("Pipeline stopped")
 
     def bus_message_cb(self, bus, msg, loop) -> bool:  # type: ignore[no-untyped-def]
@@ -442,12 +422,6 @@ class GstAVPipeline:
             async with self._mutex:
                 self._logger.debug("removing webrtcsrc")
                 self._pipeline.set_state(Gst.State.PAUSED)
-                if self._webrtcdsp:
-                    assert self._alsasrc is not None
-                    assert self._queue_audio is not None
-                    self._alsasrc.unlink(self._webrtcdsp)
-                    self._alsasrc.link(self._queue_audio)
-                    self._queue_audio.sync_state_with_parent()
                 for comp in self._components_webrtcsrc:
                     comp.set_state(Gst.State.NULL)
                     self._pipeline.remove(comp)
