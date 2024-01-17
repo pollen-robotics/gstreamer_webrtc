@@ -9,6 +9,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
+from depthai_wrappers.utils import get_config_file_path, get_config_files_names
 from gi.repository import Gst
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
@@ -16,6 +17,7 @@ from gstreamer.avpipeline import GstAVPipeline
 
 
 def parse_args() -> argparse.Namespace:
+    valid_configs = get_config_files_names()
     parser = argparse.ArgumentParser(description="webrtc gstreamer producer/consumer")
     parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
     parser.add_argument("--localnetwork", action="store_true", help="local network mode No STUN SERVER")
@@ -50,7 +52,8 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to the configuration file.",
+        choices=valid_configs,
+        help=f"Configutation file name : {valid_configs}",
     )
     parser.add_argument(
         "--force-usb2",
@@ -95,7 +98,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
         elif (args.exposure_time is None and args.iso is not None) or (args.exposure_time is not None and args.iso is None):
             logging.warning("iso and exposure time must be set. Using auto exposure.")
         teleop_wrapper = TeleopWrapper(
-            args.config,
+            get_config_file_path(args.config),
             fps=args.fps,
             rectify=args.disable_hard_rectify,
             force_usb2=args.force_usb2,
@@ -159,7 +162,6 @@ async def main_loop(args: argparse.Namespace) -> None:
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
-                #    time.sleep(0.1)
                 # audio mode. work done in gstreamer threads
                 await asyncio.sleep(1)
 
@@ -176,7 +178,7 @@ def main() -> None:
 
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
-        os.environ["GST_DEBUG"] = "2"
+        os.environ["GST_DEBUG"] = "3"
 
     asyncio.run(main_loop(args))
     # main_loop(args)
