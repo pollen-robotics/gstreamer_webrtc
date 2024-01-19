@@ -181,7 +181,6 @@ def main() -> None:
         os.environ["GST_DEBUG"] = "3"
 
     asyncio.run(main_loop(args))
-    # main_loop(args)
 
 
 if __name__ == "__main__":
