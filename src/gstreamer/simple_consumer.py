@@ -9,8 +9,9 @@ from gst_signalling.aiortc_adapter import add_signaling_arguments
 decoder = None
 
 
-def webrtcsrc_pad_added_cb(webrtcsrc, pad) -> None:  # type: ignore[no-untyped-def]
-    webrtcbin = webrtcsrc.get_by_name("webrtcbin0")
+def webrtcsrc_pad_added_cb(webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
+    assert webrtcsrc is not None
+    webrtcbin = webrtcsrc.get_by_name("webrtcbin0")  # type: ignore[attr-defined]
     webrtcbin.set_property("latency", 20)
     global decoder
     if decoder is not None:

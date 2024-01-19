@@ -1,18 +1,23 @@
 import argparse
+import asyncio
 import datetime
 import logging
 import os
-import time
-from typing import Any, Dict, Tuple
+from typing import Dict, Optional, Tuple
 
+import gi
+
+gi.require_version("Gst", "1.0")
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
+from depthai_wrappers.utils import get_config_file_path, get_config_files_names
+from gi.repository import Gst
 from gst_signalling.aiortc_adapter import add_signaling_arguments
 
 from gstreamer.avpipeline import GstAVPipeline
-from gstreamer.signalling import get_producer_id
 
 
 def parse_args() -> argparse.Namespace:
+    valid_configs = get_config_files_names()
     parser = argparse.ArgumentParser(description="webrtc gstreamer producer/consumer")
     parser.add_argument("-v", "--verbose", action="store_true", help="enable verbose mode")
     parser.add_argument("--localnetwork", action="store_true", help="local network mode No STUN SERVER")
@@ -47,7 +52,8 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
-        help="Path to the configuration file.",
+        choices=valid_configs,
+        help=f"Configutation file name : {valid_configs}",
     )
     parser.add_argument(
         "--force-usb2",
@@ -92,7 +98,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
         elif (args.exposure_time is None and args.iso is not None) or (args.exposure_time is not None and args.iso is None):
             logging.warning("iso and exposure time must be set. Using auto exposure.")
         teleop_wrapper = TeleopWrapper(
-            args.config,
+            get_config_file_path(args.config),
             fps=args.fps,
             rectify=args.disable_hard_rectify,
             force_usb2=args.force_usb2,
@@ -110,7 +116,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
 
 def configure_pipeline(
     args: argparse.Namespace, latency: Dict[str, datetime.timedelta], peer_id: str
-) -> Tuple[GstAVPipeline, Any, Any]:
+) -> Tuple[GstAVPipeline, Optional[Gst.Element], Optional[Gst.Element]]:
     logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
         args.name,
@@ -119,7 +125,7 @@ def configure_pipeline(
         stream_type=args.stream,
         lowlatencyaudio=args.lowlatencyaudio,
         localnetwork=args.localnetwork,
-        peer_audio_id=peer_id,
+        peer_audio_name=peer_id,
         congestion=args.net_congestion,
         aec=args.aec_level,
     )
@@ -137,25 +143,14 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-def main() -> None:
-    args = parse_args()
-
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-        os.environ["GST_DEBUG"] = "2"
-
+async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
-
-    # Todo: not here
-    peer_id = ""
-    if args.remote_producer_name:
-        peer_id = get_producer_id(args.signaling_host, args.signaling_port, args.remote_producer_name)
 
     teleop_wrapper, latency = configure_camera(args)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency, peer_id)
+    avpipeline, video_left, video_right = configure_pipeline(args, latency, args.remote_producer_name)
 
-    avpipeline.start()
+    await avpipeline.start()
 
     try:
         while True:
@@ -164,15 +159,28 @@ def main() -> None:
                 # print(str(latency))
                 avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
                 avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                # get_data is blocking. giving space to async methods
+                await asyncio.sleep(0)
             else:
-                time.sleep(0.1)
+                # audio mode. work done in gstreamer threads
+                await asyncio.sleep(1)
 
     except KeyboardInterrupt:
         logging.info("User exit")
     finally:
-        avpipeline.stop()
+        await avpipeline.stop()
 
     logging.info("Closing teleoperation")
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        os.environ["GST_DEBUG"] = "3"
+
+    asyncio.run(main_loop(args))
 
 
 if __name__ == "__main__":
