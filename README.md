@@ -35,3 +35,24 @@ Steam audio and video, and playback sound from remote peer
 ```console
 streaming_service --config config/CONFIG_OAK.json producer --name robot --verbose --stream audiovideo --remote-producer-name UnityClient
 ```
+
+Simple consumer for debugging purposes
+```console
+python src/gstreamer/simple_consumer.py consumer --remote-producer-peer-id <peer_id>
+```
+THe peer_id can be get in the log of the signalling server
+
+## Debugging
+
+[Enable tracer](https://gstreamer.freedesktop.org/documentation//rstracers/buffer-lateness.html?gi-language=c)
+
+### Tracing tool
+
+[Tool by gstreamer](https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/utils/tracers?ref_type=heads)
+
+```console
+python scripts/buffer_lateness.py /tmp/buffer_lateness_sender.log --include-filter "(src_(left|right)|rtpbin:*)"
+```
+```console
+python scripts/buffer_lateness.py /tmp/buffer_lateness_received.log --include-filter "(rtpjitterbuffer0|avdec*|webrtc|decoder)"
+```
