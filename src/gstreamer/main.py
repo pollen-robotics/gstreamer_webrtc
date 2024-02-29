@@ -11,7 +11,7 @@ gi.require_version("Gst", "1.0")
 from depthai_wrappers.teleop_wrapper import TeleopWrapper
 from depthai_wrappers.utils import get_config_file_path, get_config_files_names
 from gi.repository import Gst
-from gst_signalling.utils import add_signaling_arguments
+from gst_signalling.aiortc_adapter import add_signaling_arguments
 
 from gstreamer.avpipeline import GstAVPipeline
 
