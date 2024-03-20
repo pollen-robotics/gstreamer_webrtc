@@ -8,10 +8,13 @@ from typing import Dict, Optional, Tuple
 import gi
 
 gi.require_version("Gst", "1.0")
-from depthai_wrappers.teleop_wrapper import TeleopWrapper
-from depthai_wrappers.utils import get_config_file_path, get_config_files_names
 from gi.repository import Gst
 from gst_signalling.aiortc_adapter import add_signaling_arguments
+from pollen_vision.camera_wrappers.depthai.teleop import TeleopWrapper
+from pollen_vision.camera_wrappers.depthai.utils import (
+    get_config_file_path,
+    get_config_files_names,
+)
 
 from gstreamer.avpipeline import GstAVPipeline
 
