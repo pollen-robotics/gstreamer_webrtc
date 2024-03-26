@@ -14,6 +14,7 @@ from pollen_vision.camera_wrappers.depthai.teleop import TeleopWrapper
 from pollen_vision.camera_wrappers.depthai.utils import (
     get_config_file_path,
     get_config_files_names,
+    get_connected_devices,
 )
 
 from gstreamer.avpipeline import GstAVPipeline
@@ -95,6 +96,19 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
     teleop_wrapper: TeleopWrapper = None
     latency: Dict[str, datetime.timedelta] = {}
     if args.stream != "audio":
+        devices = get_connected_devices()
+        if len(devices.keys()) == 0:
+            logging.error("Teleop camera is not found")
+
+        head_mx_id = ""
+        for k, v in devices.items():
+            if v != "other":
+                head_mx_id = k
+                logging.info(f"Camera mxid : {k}")
+
+        if head_mx_id == "":
+            logging.error("Only SR camera is found !")
+
         exposure_params = None
         if args.exposure_time is not None and args.iso is not None:
             exposure_params = (args.exposure_time, args.iso)
@@ -106,6 +120,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
             rectify=args.disable_hard_rectify,
             force_usb2=args.force_usb2,
             exposure_params=exposure_params,
+            mx_id=head_mx_id,
         )
 
         logging.info("Compute camera latency...")
