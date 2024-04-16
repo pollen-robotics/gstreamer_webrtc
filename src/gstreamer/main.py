@@ -162,7 +162,7 @@ def configure_pipeline(
 
 
 async def main_loop(args: argparse.Namespace) -> None:
-    logging.info("Starting teleoperation")
+    logging.info("Starting teleoperation ***")
 
     teleop_wrapper, latency = configure_camera(args)
 
