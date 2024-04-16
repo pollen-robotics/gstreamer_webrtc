@@ -187,6 +187,7 @@ async def main_loop(args: argparse.Namespace) -> None:
         logging.info("User exit")
     finally:
         await avpipeline.stop()
+        await avpipeline.cleanup()
 
     logging.info("Closing teleoperation")
 
@@ -197,6 +198,8 @@ def main() -> None:
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
         os.environ["GST_DEBUG"] = "3"
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     asyncio.run(main_loop(args))
 
