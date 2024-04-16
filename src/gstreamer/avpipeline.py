@@ -6,7 +6,7 @@ import numpy as np
 gi.require_version("Gst", "1.0")
 import asyncio
 from threading import Thread
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy.typing as npt
 from gi.repository import GLib, Gst
