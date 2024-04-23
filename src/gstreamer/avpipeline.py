@@ -5,7 +5,8 @@ import numpy as np
 
 gi.require_version("Gst", "1.0")
 import asyncio
-from typing import Any, Coroutine, Dict, List, Optional, Tuple
+from threading import Thread
+from typing import Dict, List, Optional, Tuple
 
 import numpy.typing as npt
 from gi.repository import GLib, Gst
@@ -41,7 +42,7 @@ class GstAVPipeline:
         self._congestion = congestion
         self._aec = aec
 
-        self._coro_bus_calls: Optional[Coroutine[Any, Any, Any]] = None
+        self._thread_bus_calls: Optional[Thread] = None
         self._loop = GLib.MainLoop()
 
         self._webrtcsrc: Optional[Gst.Element] = None
@@ -61,12 +62,14 @@ class GstAVPipeline:
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
 
-    async def __del__(self) -> None:
+    def __del__(self) -> None:
+        Gst.deinit()
+
+    async def cleanup(self) -> None:
         if self._listener_task:
             self._listener_task.cancel()
         if self._peer_audio_listener:
             await self._peer_audio_listener.close()
-        Gst.deinit()
 
     def get_appsrc(self, name: str) -> Optional[Gst.Element]:
         if name == "left":
@@ -346,18 +349,19 @@ class GstAVPipeline:
         if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
             self._logger.error(f"Failed to transition pipeline to PLAYING: {ret}")
 
-        if self._coro_bus_calls is None:
-            self._coro_bus_calls = asyncio.to_thread(self._handle_bus_calls)
+        if self._thread_bus_calls is None:
+            self._thread_bus_calls = Thread(target=self._handle_bus_calls, daemon=True)
+            self._thread_bus_calls.start()
 
         GLib.timeout_add_seconds(10, self.dump_latency)
 
     async def stop(self) -> None:
         self._pipeline.set_state(Gst.State.NULL)
         self._logger.info("Pipeline stopped")
-        if self._coro_bus_calls:
+        if self._thread_bus_calls:
             self._loop.quit()
-            self._coro_bus_calls.close()
-            self._coro_bus_calls = None
+            self._thread_bus_calls.join()
+            self._thread_bus_calls = None
 
     def bus_message_cb(self, bus: Gst.Bus, msg: Gst.Message, loop) -> bool:  # type: ignore[no-untyped-def]
         t = msg.type
@@ -385,9 +389,8 @@ class GstAVPipeline:
                     self._logger.warning("failed to recalculate warning, exception: %s" % str(e))
         return True
 
-    async def _handle_bus_calls(self) -> None:
+    def _handle_bus_calls(self) -> None:
         self._logger.debug("Starting bus call loop")
-
         bus = self._pipeline.get_bus()
         bus.add_watch(GLib.PRIORITY_DEFAULT, self.bus_message_cb, self._loop)
         self._loop.run()  # type: ignore[no-untyped-call]
