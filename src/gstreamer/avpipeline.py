@@ -64,13 +64,13 @@ class GstAVPipeline:
 
     def __del__(self) -> None:
         Gst.deinit()
-    
+
     async def cleanup(self) -> None:
         if self._listener_task:
             self._listener_task.cancel()
         if self._peer_audio_listener:
             await self._peer_audio_listener.close()
-        
+
     def get_appsrc(self, name: str) -> Optional[Gst.Element]:
         if name == "left":
             return self._appsrc_left
