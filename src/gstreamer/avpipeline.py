@@ -65,7 +65,7 @@ class GstAVPipeline:
         # usb device : 4c4a:4155 Jieli Technology UACDemoV1.0
         self.VENDOR_ID = "4c4a"
         self.PRODUCT_ID = "4155"
-        self._usb_monitor_task: Optional[asyncio.Task] = None
+        self._usb_monitor_task: Optional[asyncio.Task[None]] = None
         self._usb_speaker_connected = True
 
         Gst.init(None)
