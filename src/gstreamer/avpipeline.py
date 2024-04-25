@@ -185,6 +185,7 @@ class GstAVPipeline:
         valve = Gst.ElementFactory.make("valve")
         assert valve is not None
         valve.set_property("name", "safety-valve")
+        valve.set_property("drop-mode", 1)
         self._pipeline.add(valve)
         return valve
 
