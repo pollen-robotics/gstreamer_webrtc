@@ -1,26 +1,34 @@
 import argparse
+from typing import Optional
 
 import gi
 
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
+from gst_signalling.utils import find_producer_peer_id_by_name
 
 
 class GstRecorder:
-    def __init__(self, signalling_host: str, signalling_port: int, peer_id: str) -> None:
+    def __init__(
+        self, signalling_host: str, signalling_port: int, peer_id: Optional[str] = None, peer_name: Optional[str] = None
+    ) -> None:
         Gst.init(None)
 
         self.pipeline = Gst.Pipeline.new("webRTC-recorder")
-        source = Gst.ElementFactory.make("webrtcsrc")
+        self.source = Gst.ElementFactory.make("webrtcsrc")
 
-        if not self.pipeline or not source:
+        if not self.pipeline or not self.source:
             print("Not all elements could be created.")
             exit(-1)
 
-        self.pipeline.add(source)
+        self.pipeline.add(self.source)
 
-        source.connect("pad-added", self.webrtcsrc_pad_added_cb)
-        signaller = source.get_property("signaller")
+        if peer_id is None:
+            peer_id = find_producer_peer_id_by_name(signalling_host, signalling_port, peer_name)
+            print(f"found peer id: {peer_id}")
+
+        self.source.connect("pad-added", self.webrtcsrc_pad_added_cb)
+        signaller = self.source.get_property("signaller")
         signaller.set_property("producer-peer-id", peer_id)
         signaller.set_property("uri", f"ws://{signalling_host}:{signalling_port}")
 
@@ -106,12 +114,21 @@ def main() -> None:
         "--remote-producer-peer-id",
         type=str,
         help="producer peer_id",
-        required=True,
+    )
+    parser.add_argument(
+        "--remote-producer-peer-name",
+        type=str,
+        help="producer name",
     )
 
     args = parser.parse_args()
 
-    recorder = GstRecorder(args.signaling_host, args.signaling_port, args.remote_producer_peer_id)
+    if args.remote_producer_peer_id is None and args.remote_producer_peer_name is None:
+        exit("You must set either remote_producer_peer_id or remote_producer_peer_name")
+
+    recorder = GstRecorder(
+        args.signaling_host, args.signaling_port, args.remote_producer_peer_id, args.remote_producer_peer_name
+    )
     recorder.record()
 
     # Wait until error or EOS
