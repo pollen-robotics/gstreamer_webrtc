@@ -17,8 +17,15 @@ class GstRecorder:
         self.pipeline = Gst.Pipeline.new("webRTC-recorder")
         self.source = Gst.ElementFactory.make("webrtcsrc")
 
-        if not self.pipeline or not self.source:
-            print("Not all elements could be created.")
+        if not self.pipeline:
+            print("Pipeline could be created.")
+            exit(-1)
+
+        if not self.source:
+            print(
+                "webrtcsrc component could not be created. Please make sure that the plugin is installed \
+                (see https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/net/webrtc)"
+            )
             exit(-1)
 
         self.pipeline.add(self.source)
@@ -84,6 +91,7 @@ class GstRecorder:
         if ret == Gst.StateChangeReturn.FAILURE:
             print("Error starting playback.")
             exit(-1)
+        print("recording ... (ctrl+c to quit)")
 
     def stop(self) -> None:
         print("stopping")
