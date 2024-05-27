@@ -44,6 +44,25 @@ class GstRecorder:
             videodepay.sync_state_with_parent()
             gdppay.sync_state_with_parent()
             filesink.sync_state_with_parent()
+        elif pad.get_name().startswith("audio"):  # type: ignore[union-attr]
+            audiodepay = Gst.ElementFactory.make("rtpopusdepay")
+            assert audiodepay is not None
+            gdppay = Gst.ElementFactory.make("gdppay")
+            assert gdppay is not None
+            filesink = Gst.ElementFactory.make("filesink")
+            assert filesink is not None
+            filesink.set_property("location", f"{pad.get_name()}.gdp")
+
+            self.pipeline.add(audiodepay)
+            self.pipeline.add(gdppay)
+            self.pipeline.add(filesink)
+            audiodepay.link(gdppay)
+            gdppay.link(filesink)
+            pad.link(audiodepay.get_static_pad("sink"))  # type: ignore[arg-type]
+
+            audiodepay.sync_state_with_parent()
+            gdppay.sync_state_with_parent()
+            filesink.sync_state_with_parent()
 
     def __del__(self) -> None:
         Gst.deinit()
@@ -117,5 +136,6 @@ This will create video_x.gdp streams. You can mux them using:
 gst-launch-1.0 \
     mp4mux name=mux ! filesink location=recording.mp4 \
     filesrc location=video_0.gdp ! gdpdepay ! h264parse ! queue ! mux. \
-    filesrc location=video_1.gdp ! gdpdepay ! h264parse ! queue ! mux.
+    filesrc location=video_1.gdp ! gdpdepay ! h264parse ! queue ! mux. \
+    filesrc location=audio_0.gdp ! gdpdepay ! opusparse ! queue ! mux.
 """
