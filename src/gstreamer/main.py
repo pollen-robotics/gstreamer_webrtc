@@ -5,7 +5,16 @@ import logging
 import os
 from typing import Dict, Optional, Tuple
 
+import threading
+import queue
+import grpc
+
 import gi
+from reachy2_sdk_api.error_pb2 import Error
+from reachy2_sdk_api.video_pb2 import CameraInfo, Frame, FrameTs, ListOfCameraInfo, VideoAck, View, ViewRequest, IntrinsicMatrix
+from reachy2_sdk_api.video_pb2_grpc import add_VideoStreamServicer_to_server, VideoStreamServicer
+from google.protobuf.empty_pb2 import Empty
+from google.protobuf.timestamp_pb2 import Timestamp
 
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
@@ -18,6 +27,19 @@ from pollen_vision.camera_wrappers.depthai.utils import (
 )
 
 from gstreamer.avpipeline import GstAVPipeline
+
+
+image_queue=queue.Queue(maxsize=10)
+
+
+class video_servicer(VideoStreamServicer):
+    def __init__(self):
+        pass
+
+    def GetFrame(self, request: Empty, context):
+        while True:
+            yield image_queue.get(block=False)
+            time.sleep(0.01)
 
 
 def parse_args() -> argparse.Namespace:
@@ -176,6 +198,12 @@ async def main_loop(args: argparse.Namespace) -> None:
                 data, latency, _ = teleop_wrapper.get_data()
                 # print(str(latency))
                 avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
+                try:
+                    ts= Timestamp()
+                    f=FrameTs(data=data["left"].tobytes(), ts=ts.GetCurrentTime())
+                    image_queue.put(f, block=False)
+                except Exception as e:
+                    print(f"Queue error: {e}")
                 avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
@@ -194,7 +222,17 @@ async def main_loop(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+    servicer=video_servicer()
+    options = [
+        ('grpc.max_send_message_length', 250000),
+        ('grpc.max_receive_message_length', 250000),
+    ]
 
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10),options=options)
+    add_VideoStreamServicer_to_server(servicer,server)
+    server.add_insecure_port('[::]:424242')
+    server.start()
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
         os.environ["GST_DEBUG"] = "3"
@@ -202,7 +240,7 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO)
 
     asyncio.run(main_loop(args))
-
+    server.wait_for_termination()
 
 if __name__ == "__main__":
     main()
