@@ -9,7 +9,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
-from gst_signalling.aiortc_adapter import add_signaling_arguments
+from gst_signalling.utils import add_signaling_arguments
 from pollen_vision.camera_wrappers.depthai.teleop import TeleopWrapper
 from pollen_vision.camera_wrappers.depthai.utils import (
     get_config_file_path,
