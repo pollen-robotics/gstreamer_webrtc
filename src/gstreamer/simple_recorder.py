@@ -1,26 +1,41 @@
 import argparse
+from typing import Optional
 
 import gi
 
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
+from gst_signalling.utils import find_producer_peer_id_by_name
 
 
 class GstRecorder:
-    def __init__(self, signalling_host: str, signalling_port: int, peer_id: str) -> None:
+    def __init__(
+        self, signalling_host: str, signalling_port: int, peer_id: Optional[str] = None, peer_name: Optional[str] = None
+    ) -> None:
         Gst.init(None)
 
         self.pipeline = Gst.Pipeline.new("webRTC-recorder")
-        source = Gst.ElementFactory.make("webrtcsrc")
+        self.source = Gst.ElementFactory.make("webrtcsrc")
 
-        if not self.pipeline or not source:
-            print("Not all elements could be created.")
+        if not self.pipeline:
+            print("Pipeline could be created.")
             exit(-1)
 
-        self.pipeline.add(source)
+        if not self.source:
+            print(
+                "webrtcsrc component could not be created. Please make sure that the plugin is installed \
+                (see https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs/-/tree/main/net/webrtc)"
+            )
+            exit(-1)
 
-        source.connect("pad-added", self.webrtcsrc_pad_added_cb)
-        signaller = source.get_property("signaller")
+        self.pipeline.add(self.source)
+
+        if peer_id is None:
+            peer_id = find_producer_peer_id_by_name(signalling_host, signalling_port, peer_name)
+            print(f"found peer id: {peer_id}")
+
+        self.source.connect("pad-added", self.webrtcsrc_pad_added_cb)
+        signaller = self.source.get_property("signaller")
         signaller.set_property("producer-peer-id", peer_id)
         signaller.set_property("uri", f"ws://{signalling_host}:{signalling_port}")
 
@@ -44,6 +59,25 @@ class GstRecorder:
             videodepay.sync_state_with_parent()
             gdppay.sync_state_with_parent()
             filesink.sync_state_with_parent()
+        elif pad.get_name().startswith("audio"):  # type: ignore[union-attr]
+            audiodepay = Gst.ElementFactory.make("rtpopusdepay")
+            assert audiodepay is not None
+            gdppay = Gst.ElementFactory.make("gdppay")
+            assert gdppay is not None
+            filesink = Gst.ElementFactory.make("filesink")
+            assert filesink is not None
+            filesink.set_property("location", f"{pad.get_name()}.gdp")
+
+            self.pipeline.add(audiodepay)
+            self.pipeline.add(gdppay)
+            self.pipeline.add(filesink)
+            audiodepay.link(gdppay)
+            gdppay.link(filesink)
+            pad.link(audiodepay.get_static_pad("sink"))  # type: ignore[arg-type]
+
+            audiodepay.sync_state_with_parent()
+            gdppay.sync_state_with_parent()
+            filesink.sync_state_with_parent()
 
     def __del__(self) -> None:
         Gst.deinit()
@@ -57,6 +91,7 @@ class GstRecorder:
         if ret == Gst.StateChangeReturn.FAILURE:
             print("Error starting playback.")
             exit(-1)
+        print("recording ... (ctrl+c to quit)")
 
     def stop(self) -> None:
         print("stopping")
@@ -87,12 +122,21 @@ def main() -> None:
         "--remote-producer-peer-id",
         type=str,
         help="producer peer_id",
-        required=True,
+    )
+    parser.add_argument(
+        "--remote-producer-peer-name",
+        type=str,
+        help="producer name",
     )
 
     args = parser.parse_args()
 
-    recorder = GstRecorder(args.signaling_host, args.signaling_port, args.remote_producer_peer_id)
+    if args.remote_producer_peer_id is None and args.remote_producer_peer_name is None:
+        exit("You must set either remote_producer_peer_id or remote_producer_peer_name")
+
+    recorder = GstRecorder(
+        args.signaling_host, args.signaling_port, args.remote_producer_peer_id, args.remote_producer_peer_name
+    )
     recorder.record()
 
     # Wait until error or EOS
@@ -117,5 +161,6 @@ This will create video_x.gdp streams. You can mux them using:
 gst-launch-1.0 \
     mp4mux name=mux ! filesink location=recording.mp4 \
     filesrc location=video_0.gdp ! gdpdepay ! h264parse ! queue ! mux. \
-    filesrc location=video_1.gdp ! gdpdepay ! h264parse ! queue ! mux.
+    filesrc location=video_1.gdp ! gdpdepay ! h264parse ! queue ! mux. \
+    filesrc location=audio_0.gdp ! gdpdepay ! opusparse ! queue ! mux.
 """
