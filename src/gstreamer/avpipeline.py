@@ -103,11 +103,35 @@ class GstAVPipeline:
         appsrc.set_property("format", Gst.Format.TIME)
         appsrc.set_property("is-live", True)
         appsrc.set_property("leaky-type", 2)
-        appsrc.set_property("min-latency", cam_latency_ns)
-        appsrc.set_property("max-buffers", 100)
+        appsrc.set_property("min-latency", 17_000_000)  # cam_latency_ns)
+        # appsrc.set_property("max-buffers", 100)
         self._logger.info(f"Video latency configured to {cam_latency_ns}")
+
         self._pipeline.add(appsrc)
         return appsrc
+
+    def _add_caps_NV12(self) -> Gst.Element:
+        caps_string = "video/x-raw, format=(string)NV12, width=(int)960, height=(int)720, framerate=(fraction)60/1"
+        capsfilter = Gst.ElementFactory.make("capsfilter")
+        assert capsfilter is not None
+        capsfilter.set_property("caps", Gst.Caps.from_string(caps_string))
+        self._pipeline.add(capsfilter)
+        return capsfilter
+
+    def _add_x264enc(self) -> Tuple[Gst.Element, Gst.Element]:
+        x264enc = Gst.ElementFactory.make("x264enc")
+        assert x264enc is not None
+        x264enc.set_property("tune", "zerolatency")
+        x264enc.set_property("bitrate", 4000)
+        self._pipeline.add(x264enc)
+
+        caps_string = "video/x-h264, profile=baseline"
+        capsfilter = Gst.ElementFactory.make("capsfilter")
+        assert capsfilter is not None
+        capsfilter.set_property("caps", Gst.Caps.from_string(caps_string))
+        self._pipeline.add(capsfilter)
+
+        return (x264enc, capsfilter)
 
     def _add_h264parse(self) -> Gst.Element:
         h264parse = Gst.ElementFactory.make("h264parse")
@@ -246,22 +270,71 @@ class GstAVPipeline:
         self._pipeline.add(webrtcechoprobe)
         return webrtcechoprobe
 
+    def _add_tee(self) -> Gst.Element:
+        tee = Gst.ElementFactory.make("tee")
+        assert tee is not None
+        self._pipeline.add(tee)
+        return tee
+
+    def _add_h264dec(self) -> Gst.Element:
+        openh264dec = Gst.ElementFactory.make("openh264dec")
+        assert openh264dec is not None
+        self._pipeline.add(openh264dec)
+        return openh264dec
+
+    def _add_videorate(self, fps: int) -> Tuple[Gst.Element, Gst.Element]:
+        videorate = Gst.ElementFactory.make("videorate")
+        assert videorate is not None
+        self._pipeline.add(videorate)
+
+        video_caps = Gst.caps_from_string("video/x-raw")
+        assert video_caps is not None
+        video_caps.set_value("framerate", "30/1")
+        video_caps_capsfilter = Gst.ElementFactory.make("capsfilter")
+        assert video_caps_capsfilter is not None
+        video_caps_capsfilter.set_property("caps", video_caps)
+        self._pipeline.add(video_caps_capsfilter)
+
+        return (videorate, video_caps_capsfilter)
+
+    def _add_mjpegenc(self) -> Gst.Element:
+        mjpegenc = Gst.ElementFactory.make("avenc_mjpeg")
+        assert mjpegenc is not None
+        self._pipeline.add(mjpegenc)
+        return mjpegenc
+
+    def _add_appsink(self) -> Gst.Element:
+        appsink = Gst.ElementFactory.make("appsink")
+        assert appsink is not None
+        self._pipeline.add(appsink)
+        return appsink
+
     def _set_stereo_video(self, webrtcsink: Gst.Element, cam_latency: int) -> None:
         self._logger.info("Set up stereo video pipeline")
         self._appsrc_left = self._add_appsrc("src_left", cam_latency)
         self._appsrc_right = self._add_appsrc("src_right", cam_latency)
-        h264parse_left = self._add_h264parse()
-        h264parse_right = self._add_h264parse()
+        caps_NV12_left = self._add_caps_NV12()
+        caps_NV12_right = self._add_caps_NV12()
+        h264enc_left, caps_h264_left = self._add_x264enc()
+        h264enc_right, caps_h264_right = self._add_x264enc()
 
-        if not Gst.Element.link(self._appsrc_left, h264parse_left):
-            self._logger.error("Failed to link appsrc -> h264parse")
-        if not Gst.Element.link(h264parse_left, webrtcsink):
-            self._logger.error("Failed to link h264parse -> webrtcsink")
+        if not Gst.Element.link(self._appsrc_left, caps_NV12_left):
+            self._logger.error("Failed to link appsrc -> caps left")
+        if not Gst.Element.link(caps_NV12_left, h264enc_left):
+            self._logger.error("Failed to link caps left -> h264right")
+        if not Gst.Element.link(h264enc_left, caps_h264_left):
+            self._logger.error("Failed to link h264right -> caps left")
+        if not Gst.Element.link(caps_h264_left, webrtcsink):
+            self._logger.error("Failed to link caps h264 left -> webrtcsink")
 
-        if not Gst.Element.link(self._appsrc_right, h264parse_right):
-            self._logger.error("Failed to link appsrc -> h264parse")
-        if not Gst.Element.link(h264parse_right, webrtcsink):
-            self._logger.error("Failed to link h264parse -> webrtcsink")
+        if not Gst.Element.link(self._appsrc_right, caps_NV12_right):
+            self._logger.error("Failed to link appsrc -> caps right")
+        if not Gst.Element.link(caps_NV12_right, h264enc_right):
+            self._logger.error("Failed to link caps right -> h264right")
+        if not Gst.Element.link(h264enc_right, caps_h264_right):
+            self._logger.error("Failed to link h264right -> caps h264 right")
+        if not Gst.Element.link(caps_h264_right, webrtcsink):
+            self._logger.error("Failed to link caps h264 right -> webrtcsink")
 
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         self._logger.info("Set up stereo audio pipeline")

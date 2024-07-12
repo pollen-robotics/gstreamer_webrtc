@@ -152,7 +152,7 @@ def configure_pipeline(
     video_right = None
 
     if args.stream != "audio":
-        avpipeline.make_pipeline(latency["left"].microseconds * 1000)
+        avpipeline.make_pipeline(latency["left_raw"].microseconds * 1000)
         video_left = avpipeline.get_appsrc("left")
         video_right = avpipeline.get_appsrc("right")
     else:
@@ -175,8 +175,8 @@ async def main_loop(args: argparse.Namespace) -> None:
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data()
                 # print(str(latency))
-                avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
-                avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                avpipeline.push_frame(video_left, data["left_raw"], latency["left_raw"].microseconds * 1000)
+                avpipeline.push_frame(video_right, data["right_raw"], latency["right_raw"].microseconds * 1000)
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
