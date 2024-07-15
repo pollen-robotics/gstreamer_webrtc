@@ -1,9 +1,8 @@
 import argparse
 import asyncio
-import datetime
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import gi
 
@@ -91,10 +90,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str, datetime.timedelta]]:
+def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, int]:
     logging.info("Configuring cameras...")
     teleop_wrapper: TeleopWrapper = None
-    latency: Dict[str, datetime.timedelta] = {}
+    latency: int = 0
     if args.stream != "audio":
         devices = get_connected_devices()
         if len(devices.keys()) == 0:
@@ -124,16 +123,13 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, Dict[str,
         )
 
         logging.info("Compute camera latency...")
-        # fetch some frames to get the actual latency
-        if teleop_wrapper is not None:
-            for _ in range(50):
-                _, latency, _ = teleop_wrapper.get_data()
+        latency = (int)(1.0 / args.fps) * 1_000_000_000  # to nanosecs
 
     return teleop_wrapper, latency
 
 
 def configure_pipeline(
-    args: argparse.Namespace, latency: Dict[str, datetime.timedelta], peer_id: str
+    args: argparse.Namespace, latency_ns: int, peer_id: str
 ) -> Tuple[GstAVPipeline, Optional[Gst.Element], Optional[Gst.Element]]:
     logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
@@ -152,7 +148,7 @@ def configure_pipeline(
     video_right = None
 
     if args.stream != "audio":
-        avpipeline.make_pipeline(latency["left_raw"].microseconds * 1000)
+        avpipeline.make_pipeline(latency_ns)
         video_left = avpipeline.get_appsrc("left")
         video_right = avpipeline.get_appsrc("right")
     else:
@@ -164,9 +160,9 @@ def configure_pipeline(
 async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
 
-    teleop_wrapper, latency = configure_camera(args)
+    teleop_wrapper, latency_base = configure_camera(args)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency, args.remote_producer_name)
+    avpipeline, video_left, video_right = configure_pipeline(args, latency_base, args.remote_producer_name)
 
     await avpipeline.start()
 
@@ -175,8 +171,8 @@ async def main_loop(args: argparse.Namespace) -> None:
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data()
                 # print(str(latency))
-                avpipeline.push_frame(video_left, data["left_raw"], latency["left_raw"].microseconds * 1000)
-                avpipeline.push_frame(video_right, data["right_raw"], latency["right_raw"].microseconds * 1000)
+                avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
+                avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
