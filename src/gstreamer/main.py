@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 import gi
 
 gi.require_version("Gst", "1.0")
+import rclpy
 from gi.repository import Gst
 from gst_signalling.utils import add_signaling_arguments
 from pollen_vision.camera_wrappers.depthai.teleop import TeleopWrapper
@@ -15,8 +16,10 @@ from pollen_vision.camera_wrappers.depthai.utils import (
     get_config_files_names,
     get_connected_devices,
 )
+from rclpy.executors import MultiThreadedExecutor
 
 from gstreamer.avpipeline import GstAVPipeline
+from gstreamer.ros_publisher import ROSPublisher
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +87,7 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable hardware rectification",
     )
+    parser.add_argument("--ros", action="store_true", help="pusblish camera images to ROS")
 
     add_signaling_arguments(parser)  # signalling args
 
@@ -123,7 +127,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, int]:
         )
 
         logging.info("Compute camera latency...")
-        latency = (int)(1.0 / args.fps) * 1_000_000_000  # to nanosecs
+        latency = 30_000_000  # (int)(1.0 / args.fps) * 1_000_000_000  # to nanosecs
 
     return teleop_wrapper, latency
 
@@ -157,6 +161,12 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
+async def run_ros(executor: ROSPublisher) -> None:
+    logging.debug("Start spin ros nodes")
+    executor.spin()
+    logging.debug("End spin ROS")
+
+
 async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
 
@@ -166,6 +176,16 @@ async def main_loop(args: argparse.Namespace) -> None:
 
     await avpipeline.start()
 
+    if args.ros:
+        rclpy.init()
+        executor = MultiThreadedExecutor()
+        rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left")
+        rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right")
+        executor.add_node(rospublisher_left_cam)
+        executor.add_node(rospublisher_right_cam)
+        # should pass the executor here but it does not work
+        asyncio.run_coroutine_threadsafe(run_ros(rospublisher_left_cam), asyncio.get_event_loop())
+
     try:
         while True:
             if teleop_wrapper:
@@ -173,6 +193,11 @@ async def main_loop(args: argparse.Namespace) -> None:
                 # print(str(latency))
                 avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
                 avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+
+                if args.ros:
+                    rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes())
+                    rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes())
+
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
@@ -184,6 +209,8 @@ async def main_loop(args: argparse.Namespace) -> None:
     finally:
         await avpipeline.stop()
         await avpipeline.cleanup()
+        if args.ros:
+            executor.shutdown()
 
     logging.info("Closing teleoperation")
 

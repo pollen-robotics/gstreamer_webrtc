@@ -50,13 +50,15 @@ class GstConsumer:
             webrtcbin = webrtcsrc.get_by_name(webrtcbin_name)
             assert webrtcbin is not None
             # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
-            webrtcbin.set_property("latency", 50)
+            webrtcbin.set_property("latency", 10)
 
     def webrtcsrc_pad_added_cb(self, webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
         self._configure_webrtcbin(webrtcsrc)
         if pad.get_name().startswith("video"):  # type: ignore[union-attr]
             videodepay = Gst.ElementFactory.make("rtph264depay")
             assert videodepay is not None
+            queue = Gst.ElementFactory.make("queue")
+            assert queue is not None
             h264parse = Gst.ElementFactory.make("h264parse")
             assert h264parse is not None
             decoder = Gst.ElementFactory.make("nvh264dec")
@@ -67,17 +69,20 @@ class GstConsumer:
             assert sink is not None
 
             self.pipeline.add(videodepay)
+            self.pipeline.add(queue)
             self.pipeline.add(h264parse)
             self.pipeline.add(decoder)
             self.pipeline.add(videoconvert)
             self.pipeline.add(sink)
-            videodepay.link(h264parse)
+            videodepay.link(queue)
+            queue.link(h264parse)
             h264parse.link(decoder)
             decoder.link(videoconvert)
             videoconvert.link(sink)
             pad.link(videodepay.get_static_pad("sink"))  # type: ignore[arg-type]
 
             videodepay.sync_state_with_parent()
+            queue.sync_state_with_parent()
             h264parse.sync_state_with_parent()
             videoconvert.sync_state_with_parent()
             decoder.sync_state_with_parent()
@@ -85,6 +90,8 @@ class GstConsumer:
         elif pad.get_name().startswith("audio"):  # type: ignore[union-attr]
             audiodepay = Gst.ElementFactory.make("rtpopusdepay")
             assert audiodepay is not None
+            queue = Gst.ElementFactory.make("queue")
+            assert queue is not None
             opusparse = Gst.ElementFactory.make("opusparse")
             assert opusparse is not None
             opusdec = Gst.ElementFactory.make("opusdec")
@@ -97,12 +104,14 @@ class GstConsumer:
             assert sink is not None
 
             self.pipeline.add(audiodepay)
+            self.pipeline.add(queue)
             self.pipeline.add(opusparse)
             self.pipeline.add(opusdec)
             self.pipeline.add(audioconvert)
             self.pipeline.add(audioresample)
             self.pipeline.add(sink)
-            audiodepay.link(opusparse)
+            audiodepay.link(queue)
+            queue.link(opusparse)
             opusparse.link(opusdec)
             opusdec.link(audioconvert)
             audioconvert.link(audioresample)
@@ -110,6 +119,7 @@ class GstConsumer:
             pad.link(audiodepay.get_static_pad("sink"))  # type: ignore[arg-type]
 
             audiodepay.sync_state_with_parent()
+            queue.sync_state_with_parent()
             opusdec.sync_state_with_parent()
             opusparse.sync_state_with_parent()
             audioconvert.sync_state_with_parent()
