@@ -2,11 +2,14 @@ import argparse
 import asyncio
 import logging
 import os
-from typing import Optional, Tuple
+from threading import Thread
+from typing import List, Optional, Tuple
 
 import gi
 
 gi.require_version("Gst", "1.0")
+import time
+
 import rclpy
 from gi.repository import Gst
 from gst_signalling.utils import add_signaling_arguments
@@ -94,14 +97,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, int]:
+def configure_camera(args: argparse.Namespace) -> TeleopWrapper:
     logging.info("Configuring cameras...")
     teleop_wrapper: TeleopWrapper = None
-    latency: int = 0
     if args.stream != "audio":
         devices = get_connected_devices()
         if len(devices.keys()) == 0:
-            logging.error("Teleop camera is not found")
+            logging.error("There is no luxonis camera !")
 
         head_mx_id = ""
         for k, v in devices.items():
@@ -110,7 +112,7 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, int]:
                 logging.info(f"Camera mxid : {k}")
 
         if head_mx_id == "":
-            logging.error("Only SR camera is found !")
+            logging.error("Teleop camera is not found !")
 
         exposure_params = None
         if args.exposure_time is not None and args.iso is not None:
@@ -126,10 +128,18 @@ def configure_camera(args: argparse.Namespace) -> Tuple[TeleopWrapper, int]:
             mx_id=head_mx_id,
         )
 
-        logging.info("Compute camera latency...")
-        latency = 30_000_000  # (int)(1.0 / args.fps) * 1_000_000_000  # to nanosecs
+    return teleop_wrapper
 
-    return teleop_wrapper, latency
+
+def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
+    """Return the minimum latency in nanosecs for configuring gstreamer appsrc"""
+    logging.info("Compute camera latency...")
+    latencies: List[int] = []
+    if teleop_wrapper is not None:
+        for _ in range(30):  # sample of 30 frames. first latencies are usually not accurate
+            _, latency, _ = teleop_wrapper.get_data_h264()
+            latencies.append(latency["left"].microseconds * 1000)  # to ns
+    return min(latencies)
 
 
 def configure_pipeline(
@@ -161,43 +171,44 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-async def run_ros(executor: ROSPublisher) -> None:
-    logging.debug("Start spin ros nodes")
-    executor.spin()
-    logging.debug("End spin ROS")
+def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop) -> None:
+    rclpy.init()
+    executor = MultiThreadedExecutor()
+    rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop)
+    rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right", asyncio_loop)
+    executor.add_node(rospublisher_left_cam)
+    executor.add_node(rospublisher_right_cam)
+    executor_thread = Thread(target=executor.spin, daemon=True)
+    executor_thread.start()
+    while True:
+        data, _, _ = teleop_wrapper.get_data_mjpeg()
+        rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes())
+        rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes())
+        time.sleep(0.1)
+    # executor.shutdown()
 
 
 async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
 
-    teleop_wrapper, latency_base = configure_camera(args)
+    teleop_wrapper = configure_camera(args)
+    latency_ns = compute_camera_latency(teleop_wrapper)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency_base, args.remote_producer_name)
+    avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name)
 
     await avpipeline.start()
 
     if args.ros:
-        rclpy.init()
-        executor = MultiThreadedExecutor()
-        rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left")
-        rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right")
-        executor.add_node(rospublisher_left_cam)
-        executor.add_node(rospublisher_right_cam)
-        # should pass the executor here but it does not work
-        asyncio.run_coroutine_threadsafe(run_ros(rospublisher_left_cam), asyncio.get_event_loop())
+        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop()), daemon=True)
+        thread_ros.start()
 
     try:
         while True:
             if teleop_wrapper:
-                data, latency, _ = teleop_wrapper.get_data()
+                data, latency, _ = teleop_wrapper.get_data_h264()
                 # print(str(latency))
                 avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
                 avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
-
-                if args.ros:
-                    rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes())
-                    rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes())
-
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
@@ -209,8 +220,6 @@ async def main_loop(args: argparse.Namespace) -> None:
     finally:
         await avpipeline.stop()
         await avpipeline.cleanup()
-        if args.ros:
-            executor.shutdown()
 
     logging.info("Closing teleoperation")
 

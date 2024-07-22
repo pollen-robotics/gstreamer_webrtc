@@ -8,7 +8,7 @@ from sensor_msgs.msg._compressed_image import CompressedImage
 
 
 class ROSPublisher(Node):  # type: ignore[misc]
-    def __init__(self, cam_config: CamConfig, side: str) -> None:
+    def __init__(self, cam_config: CamConfig, side: str, asyncio_loop: asyncio.AbstractEventLoop) -> None:
         super().__init__(f"teleop_camera_publisher_{side}")
         self._logger = logging.getLogger(__name__)
         self._clock = self.get_clock()
@@ -35,12 +35,9 @@ class ROSPublisher(Node):  # type: ignore[misc]
         self._camera_info.r = R
         self._camera_info.p = P
 
-        self._task = asyncio.create_task(self._publish_camera_info(side))
+        asyncio.run_coroutine_threadsafe(self._publish_camera_info(side), asyncio_loop)
 
         self._logger.info(f"Node teleop_camera_publisher_{side} ready!")
-
-    async def clean_up(self) -> None:
-        self._task.cancel()
 
     def publish_img(self, frame: bytes) -> None:
         """Read image from the requested side and publishes it."""
