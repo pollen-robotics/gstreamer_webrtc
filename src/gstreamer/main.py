@@ -181,9 +181,9 @@ def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.Abstract
     executor_thread = Thread(target=executor.spin, daemon=True)
     executor_thread.start()
     while True:
-        data, _, _ = teleop_wrapper.get_data_mjpeg()
-        rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes())
-        rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes())
+        data, latency, _ = teleop_wrapper.get_data_mjpeg()
+        rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes(), latency["left_mjpeg"].microseconds * 1000)
+        rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes(), latency["right_mjpeg"].microseconds * 1000)
         time.sleep(0.1)
     # executor.shutdown()
 

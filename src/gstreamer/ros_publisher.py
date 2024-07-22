@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from pollen_vision.camera_wrappers.depthai.cam_config import CamConfig
+from rclpy.duration import Duration
 from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg._compressed_image import CompressedImage
@@ -39,9 +40,11 @@ class ROSPublisher(Node):  # type: ignore[misc]
 
         self._logger.info(f"Node teleop_camera_publisher_{side} ready!")
 
-    def publish_img(self, frame: bytes) -> None:
+    def publish_img(self, frame: bytes, latency_ns: int = 0) -> None:
         """Read image from the requested side and publishes it."""
-        self._compr_img.header.stamp = self._clock.now().to_msg()
+        offset_duration = Duration(nanoseconds=latency_ns)
+        ts = self._clock.now() - offset_duration
+        self._compr_img.header.stamp = ts.to_msg()
         self._compr_img.data = frame
         self._camera_publisher.publish(self._compr_img)
 
