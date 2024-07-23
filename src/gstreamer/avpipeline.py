@@ -62,8 +62,9 @@ class GstAVPipeline:
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
 
-    # def __del__(self) -> None:
-    #    Gst.deinit()
+    def __del__(self) -> None:
+        self._logger.info("stopped ")
+        Gst.deinit()
 
     async def cleanup(self) -> None:
         if self._listener_task:
@@ -80,6 +81,37 @@ class GstAVPipeline:
             self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
             return None
 
+    def _consumer_added(self, webrtcbin, arg1, udata):
+        self._logger.info("consumer added")
+
+        '''
+        for sink in iter(webrtcbin.iterate_sinks()):
+            name = sink.get_name()
+            self._logger.info(f"set processing deadline for {name}")
+            sink.set_property("processing-deadline", 500_000)
+        '''
+        elements = webrtcbin.iterate_all_by_element_factory_name("appsink")
+        if isinstance(elements, Gst.Iterator):
+            # Patch "TypeError: ‘Iterator’ object is not iterable."
+            # For versions we have to get a python iterable object from Gst iterator
+            _elements = []
+            while True:
+                ret, el = elements.next()
+                if ret == Gst.IteratorResult(1):  # GST_ITERATOR_OK
+                    _elements.append(el)
+                else:
+                    break
+            elements = _elements
+
+        for sink in elements:
+            name = sink.get_name()
+            self._logger.info(f"set processing deadline for {name}")
+            sink.set_property("processing-deadline", 1_000_000)
+
+        Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
+
+        GLib.timeout_add_seconds(5, self.dump_latency)
+
     def _add_webrtcink(self) -> Gst.Element:
         webrtcsink = Gst.ElementFactory.make("webrtcsink")
         assert webrtcsink is not None
@@ -93,6 +125,9 @@ class GstAVPipeline:
             webrtcsink.set_property("congestion-control", "disabled")
         self._signaller = webrtcsink.get_property("signaller")
         self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
+
+        webrtcsink.connect("consumer-added", self._consumer_added)
+
         self._pipeline.add(webrtcsink)
         return webrtcsink
 
@@ -358,6 +393,7 @@ class GstAVPipeline:
     async def stop(self) -> None:
         self._pipeline.set_state(Gst.State.NULL)
         self._logger.info("Pipeline stopped")
+        #Gst.deinit()
         if self._thread_bus_calls:
             self._loop.quit()
             self._thread_bus_calls.join()
