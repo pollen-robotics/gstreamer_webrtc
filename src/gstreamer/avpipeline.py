@@ -62,8 +62,8 @@ class GstAVPipeline:
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
 
-    def __del__(self) -> None:
-        Gst.deinit()
+    # def __del__(self) -> None:
+    #    Gst.deinit()
 
     async def cleanup(self) -> None:
         if self._listener_task:
@@ -193,7 +193,7 @@ class GstAVPipeline:
             webrtcbin = webrtcsrc.get_by_name(webrtcbin_name)
             assert webrtcbin is not None
             # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
-            webrtcbin.set_property("latency", 50)
+            webrtcbin.set_property("latency", 10)
 
     def _webrtcsrc_pad_added_cb(self, webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
         if pad is not None and pad.get_name().startswith("audio"):  # type: ignore[union-attr]
