@@ -139,10 +139,10 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
         for _ in range(30):  # sample of 30 frames. first latencies are usually not accurate
             _, latency, _ = teleop_wrapper.get_data_h264()
             latencies.append(latency["left"].microseconds * 1000)  # to ns
-    
+
     # tip gstreamer: reduce latency of one frame since h264parse is adding one frame latency
     offset = (int)(1.0 / teleop_wrapper.cam_config.fps * 1_000_000_000)
-        
+
     return min(latencies) - offset
 
 
