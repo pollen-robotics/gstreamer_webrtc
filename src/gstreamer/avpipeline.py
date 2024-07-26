@@ -84,12 +84,6 @@ class GstAVPipeline:
     def _consumer_added(self, webrtcbin, arg1, udata):
         self._logger.info("consumer added")
 
-        '''
-        for sink in iter(webrtcbin.iterate_sinks()):
-            name = sink.get_name()
-            self._logger.info(f"set processing deadline for {name}")
-            sink.set_property("processing-deadline", 500_000)
-        '''
         elements = webrtcbin.iterate_all_by_element_factory_name("appsink")
         if isinstance(elements, Gst.Iterator):
             # Patch "TypeError: ‘Iterator’ object is not iterable."
@@ -108,7 +102,7 @@ class GstAVPipeline:
             self._logger.info(f"set processing deadline for {name}")
             sink.set_property("processing-deadline", 1_000_000)
 
-        Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
+        #Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
 
         GLib.timeout_add_seconds(5, self.dump_latency)
 
@@ -185,6 +179,7 @@ class GstAVPipeline:
             alsasink.set_property("device", "lowlatencysink")
         alsasink.set_property("buffer-time", 30000)
         alsasink.set_property("latency-time", 10000)
+        alsasink.set_property("processing-deadline", 1_000_000)
         self._pipeline.add(alsasink)
         return alsasink
 
