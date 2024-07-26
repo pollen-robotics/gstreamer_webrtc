@@ -189,6 +189,8 @@ class GstAVPipeline:
         assert audiotestsrc is not None
         audiotestsrc.set_property("wave", "silence")
         audiotestsrc.set_property("is-live", True)
+        # Send buffers the size of the remote branch (10ms @ 8kHz)
+        audiotestsrc.set_property("samplesperbuffer", 80)
         self._pipeline.add(audiotestsrc)
         return audiotestsrc
 
