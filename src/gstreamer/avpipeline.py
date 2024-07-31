@@ -82,7 +82,7 @@ class GstAVPipeline:
             self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
             return None
 
-    def _consumer_added(self, webrtcbin : Gst.Bin, arg1 : Gst.Element, udata: bytes) -> None:
+    def _consumer_added(self, webrtcbin: Gst.Bin, arg1: Gst.Element, udata: bytes) -> None:
         self._logger.info("consumer added")
 
         elements = webrtcbin.iterate_all_by_element_factory_name("appsink")
@@ -375,9 +375,8 @@ class GstAVPipeline:
             return
 
         buf = Gst.Buffer.new_wrapped(data.tobytes())
-        # buf.pts = Gst.CLOCK_TIME_NONE
+        buf.pts = Gst.CLOCK_TIME_NONE
         buf.dts = time - latency_ns
-        buf.pts = buf.dts
 
         appsrc.emit("push-buffer", buf)
 
