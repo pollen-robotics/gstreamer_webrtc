@@ -15,7 +15,9 @@ class ROSPublisher(Node):  # type: ignore[misc]
         self._clock = self.get_clock()
         self._side = side
 
-        self._camera_publisher = self.create_publisher(CompressedImage, f"teleop_camera/{self._side}_image/compressed", 1)
+        self._camera_publisher = self.create_publisher(
+            CompressedImage, f"teleop_camera/{self._side}_image/image_raw/compressed", 1
+        )
         self._logger.info(f'Launching "{self._camera_publisher.topic_name}" publisher.')
 
         self._compr_img = CompressedImage()
