@@ -24,7 +24,7 @@ class ROSPublisher(Node):  # type: ignore[misc]
         self._compr_img.format = "jpeg"
         self._compr_img.header.frame_id = f"{side}_camera_optical"
 
-        self._camera_info_publisher = self.create_publisher(CameraInfo, f"teleop_camera/{self._side}_image/camera_info", 5)
+        self._camera_info_publisher = self.create_publisher(CameraInfo, f"teleop_camera/{self._side}_image/image_raw/camera_info", 5)
         self._logger.info(f'Launching "{self._camera_info_publisher.topic_name}" publisher.')
 
         self._camera_info = CameraInfo()
