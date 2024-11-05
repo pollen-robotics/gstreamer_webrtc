@@ -42,6 +42,7 @@ class GstAVPipeline:
         self._peer_audio_id = ""
         self._congestion = congestion
         self._aec = aec
+        self.JITTER_BUFFER_LATENCY = 10
 
         self._thread_bus_calls: Optional[Thread] = None
         self._loop = GLib.MainLoop()
@@ -72,6 +73,7 @@ class GstAVPipeline:
         self._pipeline = Gst.Pipeline.new()
 
     def __del__(self) -> None:
+        self._logger.info("stopped ")
         Gst.deinit()
 
     async def cleanup(self) -> None:
@@ -91,6 +93,30 @@ class GstAVPipeline:
             self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
             return None
 
+    def _consumer_added(self, webrtcbin: Gst.Bin, arg1: Gst.Element, udata: bytes) -> None:
+        self._logger.info("consumer added")
+
+        elements = webrtcbin.iterate_all_by_element_factory_name("appsink")
+        new_elements = []
+        if isinstance(elements, Gst.Iterator):
+            # Patch "TypeError: ‘Iterator’ object is not iterable."
+            # from https://github.com/jackersson/gstreamer-python/blob/master/gstreamer/gst_tools.py
+            while True:
+                ret, el = elements.next()
+                if ret == Gst.IteratorResult(1):  # GST_ITERATOR_OK
+                    new_elements.append(el)
+                else:
+                    break
+
+        for sink in new_elements:
+            name = sink.get_name()
+            self._logger.info(f"set processing deadline for {name}")
+            sink.set_property("processing-deadline", 1_000_000)
+
+        # Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
+
+        GLib.timeout_add_seconds(5, self.dump_latency)
+
     def _add_webrtcink(self) -> Gst.Element:
         webrtcsink = Gst.ElementFactory.make("webrtcsink")
         assert webrtcsink is not None
@@ -104,6 +130,9 @@ class GstAVPipeline:
             webrtcsink.set_property("congestion-control", "disabled")
         self._signaller = webrtcsink.get_property("signaller")
         self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
+
+        webrtcsink.connect("consumer-added", self._consumer_added)
+
         self._pipeline.add(webrtcsink)
         return webrtcsink
 
@@ -162,6 +191,7 @@ class GstAVPipeline:
             alsasink.set_property("device", "lowlatencysink")
         alsasink.set_property("buffer-time", 30000)
         alsasink.set_property("latency-time", 10000)
+        alsasink.set_property("processing-deadline", 1_000_000)
         self._pipeline.add(alsasink)
         return alsasink
 
@@ -171,15 +201,26 @@ class GstAVPipeline:
         assert audiotestsrc is not None
         audiotestsrc.set_property("wave", "silence")
         audiotestsrc.set_property("is-live", True)
+        # Send buffers the size of the remote branch (10ms @ 8kHz)
+        audiotestsrc.set_property("samplesperbuffer", 80)
         self._pipeline.add(audiotestsrc)
         return audiotestsrc
 
-    def _add_audiomixer(self) -> Gst.Element:
-        audiomixer = Gst.ElementFactory.make("audiomixer")
-        assert audiomixer is not None
-        audiomixer.set_property("name", "audiomixer-in")
-        self._pipeline.add(audiomixer)
-        return audiomixer
+    def _add_fallbackswitch(self) -> Gst.Element:
+        fallbackswitch = Gst.ElementFactory.make("fallbackswitch")
+        assert fallbackswitch is not None
+        fallbackswitch.set_property("name", "fallbackswitch-in")
+        # fallbackswitch.set_property("min-upstream-latency", self.JITTER_BUFFER_LATENCY)
+        switch_pad_tmpl = fallbackswitch.get_pad_template("sink_%u")
+        assert switch_pad_tmpl is not None
+        switch_pad = fallbackswitch.request_pad(switch_pad_tmpl)
+        assert switch_pad is not None
+        # Set a higher than default priority for silencesrc,
+        # this way fallbackswitch will automatically switch to
+        # the remote branch when it is connected.
+        switch_pad.set_property("priority", 10)
+        self._pipeline.add(fallbackswitch)
+        return fallbackswitch
 
     def _add_valve(self) -> Gst.Element:
         valve = Gst.ElementFactory.make("valve")
@@ -213,18 +254,18 @@ class GstAVPipeline:
             webrtcbin = webrtcsrc.get_by_name(webrtcbin_name)
             assert webrtcbin is not None
             # jitterbuffer has a default 200 ms buffer. Should be ok to lower this in localnetwork config
-            webrtcbin.set_property("latency", 50)
+            webrtcbin.set_property("latency", self.JITTER_BUFFER_LATENCY)
 
     def _webrtcsrc_pad_added_cb(self, webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
         if pad is not None and pad.get_name().startswith("audio"):  # type: ignore[union-attr]
             self._logger.info("Connecting audio client")
 
             self._configure_webrtcbin(webrtcsrc)
-            audiomixer = self._pipeline.get_by_name("audiomixer-in")
-            assert audiomixer is not None
-            template = audiomixer.get_pad_template("sink_%u")
+            fallbackswitch = self._pipeline.get_by_name("fallbackswitch-in")
+            assert fallbackswitch is not None
+            template = fallbackswitch.get_pad_template("sink_%u")
             assert template is not None
-            mixer_pad = audiomixer.request_pad(template)
+            mixer_pad = fallbackswitch.request_pad(template)
             assert mixer_pad is not None
             pad.link(mixer_pad)
 
@@ -303,17 +344,17 @@ class GstAVPipeline:
 
     def _set_audio_playback(self) -> None:
         audiotestsrc = self._add_audiotestsrc()
-        audiomixer = self._add_audiomixer()
+        fallbackswitch = self._add_fallbackswitch()
         webrtcechoprobe = self._add_webrtcechoprobe()
         audioconvert = self._add_audioconvert()
         audioresample = self._add_audioresample()
         valve = self._add_valve()
         alsasink = self._add_alsasink(self._lowlatencyaudio)
 
-        if not Gst.Element.link(audiotestsrc, audiomixer):
-            self._logger.error("Failed to link audiotestsrc -> audiomixer")
-        if not Gst.Element.link(audiomixer, webrtcechoprobe):
-            self._logger.error("Failed to link audiomixer -> webrtcprobe")
+        if not Gst.Element.link(audiotestsrc, fallbackswitch):
+            self._logger.error("Failed to link audiotestsrc -> fallbackswitch")
+        if not Gst.Element.link(fallbackswitch, webrtcechoprobe):
+            self._logger.error("Failed to link fallbackswitch -> webrtcprobe")
         if not Gst.Element.link(webrtcechoprobe, audioconvert):
             self._logger.error("Failed to link webrtcprobe -> audioconvert")
         if not Gst.Element.link(audioconvert, audioresample):
@@ -381,6 +422,7 @@ class GstAVPipeline:
     async def stop(self) -> None:
         self._pipeline.set_state(Gst.State.NULL)
         self._logger.info("Pipeline stopped")
+        # Gst.deinit()
         if self._thread_bus_calls:
             self._loop.quit()
             self._thread_bus_calls.join()
