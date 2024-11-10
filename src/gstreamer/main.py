@@ -147,7 +147,7 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
 
 
 def configure_pipeline(
-    args: argparse.Namespace, latency_ns: int, peer_id: str
+    args: argparse.Namespace, latency_ns: int, peer_id: str, stop_event: asyncio.Event
 ) -> Tuple[GstAVPipeline, Optional[Gst.Element], Optional[Gst.Element]]:
     logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
@@ -155,6 +155,7 @@ def configure_pipeline(
         args.signaling_host,
         args.signaling_port,
         stream_type=args.stream,
+        stop_event=stop_event,
         lowlatencyaudio=args.lowlatencyaudio,
         localnetwork=args.localnetwork,
         peer_audio_name=peer_id,
@@ -198,16 +199,18 @@ async def main_loop(args: argparse.Namespace) -> None:
     teleop_wrapper = configure_camera(args)
     latency_ns = compute_camera_latency(teleop_wrapper)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name)
+    stop_event = asyncio.Event()
+
+    avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name, stop_event)
 
     await avpipeline.start()
 
     if args.ros:
-        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop()), daemon=True)
+        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop(), stop_event), daemon=True)
         thread_ros.start()
 
     try:
-        while True:
+        while not stop_event.is_set():
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data_h264()
                 # print(str(latency))

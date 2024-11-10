@@ -21,6 +21,7 @@ class GstAVPipeline:
         signalling_host: str,
         signalling_port: int,
         stream_type: str,
+        stop_event: asyncio.Event,
         lowlatencyaudio: bool = True,
         localnetwork: bool = False,
         peer_audio_name: Optional[str] = None,
@@ -34,6 +35,7 @@ class GstAVPipeline:
         self._stream_type = stream_type
         self._signalling_host = signalling_host
         self._signalling_port = signalling_port
+        self._stop_event = stop_event
         self._appsrc_left: Optional[Gst.Element] = None
         self._appsrc_right: Optional[Gst.Element] = None
         self._lowlatencyaudio = lowlatencyaudio
@@ -42,7 +44,7 @@ class GstAVPipeline:
         self._peer_audio_id = ""
         self._congestion = congestion
         self._aec = aec
-        self.JITTER_BUFFER_LATENCY = 10
+        self.JITTER_BUFFER_LATENCY = 5  # ms
 
         self._thread_bus_calls: Optional[Thread] = None
         self._loop = GLib.MainLoop()
@@ -63,9 +65,9 @@ class GstAVPipeline:
             self._peer_audio_listener.on("PeerStatusChanged", self._handle_peer_status_changed)
             self._listener_task = asyncio.create_task(self._peer_audio_listener.serve4ever())
 
-        # usb device : 4c4a:4155 Jieli Technology UACDemoV1.0
-        self.VENDOR_ID = "4c4a"
-        self.PRODUCT_ID = "4155"
+        # Bus 19f7:0023 RODE Microphones RØDE AI-Micro
+        self.VENDOR_ID = "19f7"
+        self.PRODUCT_ID = "0023"
         self._usb_monitor_task: Optional[asyncio.Task[None]] = None
         self._usb_speaker_connected = True
 
@@ -176,6 +178,7 @@ class GstAVPipeline:
     def _add_alsasrc(self, lowlatencydevice: bool = True) -> Gst.Element:
         alsasrc = Gst.ElementFactory.make("alsasrc")
         assert alsasrc is not None
+        alsasrc.set_property("name", "microphones")
         if lowlatencydevice:
             alsasrc.set_property("device", "lowlatencysrc")
         alsasrc.set_property("buffer-time", 30000)
@@ -422,7 +425,7 @@ class GstAVPipeline:
     async def stop(self) -> None:
         self._pipeline.set_state(Gst.State.NULL)
         self._logger.info("Pipeline stopped")
-        # Gst.deinit()
+
         if self._thread_bus_calls:
             self._loop.quit()
             self._thread_bus_calls.join()
@@ -430,17 +433,28 @@ class GstAVPipeline:
 
     def _process_error_msg(self, err: str, loop) -> bool:  # type: ignore[no-untyped-def]
         if "gst-resource-error-quark" in err:
+
+            if "Could not open audio device for recording" in err:
+                self._logger.error("Emergency stop")
+                self._stop_event.set()
+                return False
+
             self._logger.error("USB speaker disconnected. Dropping output audio")
             valve = self._pipeline.get_by_name("safety-valve")
-            assert valve is not None
-            valve.set_property("drop", True)
-            alsasink = self._pipeline.get_by_name("speaker")
-            assert alsasink is not None
-            alsasink.set_state(Gst.State.NULL)
+            if valve is not None:
+                # assert valve is not None
+                valve.set_property("drop", True)
+                alsasink = self._pipeline.get_by_name("speaker")
+                assert alsasink is not None
+                alsasink.set_state(Gst.State.NULL)
 
-            self._usb_speaker_connected = False
-            if self._usb_monitor_task is None or self._usb_monitor_task.done():
-                self._usb_monitor_task = self._asyncio_loop.create_task(self._attempt_to_reconnect())
+                # alsasrc = self._pipeline.get_by_name("microphones")
+                # assert alsasrc is not None
+                # alsasrc.set_state(Gst.State.NULL)
+
+                self._usb_speaker_connected = False
+                if self._usb_monitor_task is None or self._usb_monitor_task.done():
+                    self._usb_monitor_task = self._asyncio_loop.create_task(self._attempt_to_reconnect())
             return True
         else:
             loop.quit()
