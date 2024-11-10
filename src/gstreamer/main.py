@@ -176,16 +176,16 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop) -> None:
+def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     rclpy.init()
     executor = MultiThreadedExecutor()
-    rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop)
-    rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right", asyncio_loop)
+    rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop, stop_event)
+    rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right", asyncio_loop, stop_event)
     executor.add_node(rospublisher_left_cam)
     executor.add_node(rospublisher_right_cam)
     executor_thread = Thread(target=executor.spin, daemon=True)
     executor_thread.start()
-    while True:
+    while not stop_event.is_set():
         data, latency, _ = teleop_wrapper.get_data_mjpeg()
         rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes(), latency["left_mjpeg"].microseconds * 1000)
         rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes(), latency["right_mjpeg"].microseconds * 1000)
