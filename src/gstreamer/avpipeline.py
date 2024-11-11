@@ -56,6 +56,7 @@ class GstAVPipeline:
 
         self._peer_audio_listener: Optional[GstSignallingListener] = None
         self._listener_task = None
+        self._usb_monitor_task: Optional[asyncio.Task[None]] = None
         if self._peer_audio_name is not None:
             self._peer_audio_listener = GstSignallingListener(
                 host=signalling_host,
@@ -65,11 +66,10 @@ class GstAVPipeline:
             self._peer_audio_listener.on("PeerStatusChanged", self._handle_peer_status_changed)
             self._listener_task = asyncio.create_task(self._peer_audio_listener.serve4ever())
 
-        # Bus 19f7:0023 RODE Microphones RØDE AI-Micro
-        self.VENDOR_ID = "19f7"
-        self.PRODUCT_ID = "0023"
-        self._usb_monitor_task: Optional[asyncio.Task[None]] = None
-        self._usb_speaker_connected = True
+            # Bus 19f7:0023 RODE Microphones RØDE AI-Micro
+            self.VENDOR_ID = "19f7"
+            self.PRODUCT_ID = "0023"
+            self._usb_monitor_task = self._asyncio_loop.create_task(self._monitor_usb())
 
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
@@ -209,10 +209,10 @@ class GstAVPipeline:
         self._pipeline.add(audiotestsrc)
         return audiotestsrc
 
-    def _add_fallbackswitch(self) -> Gst.Element:
+    def _add_fallbackswitch(self, name: str) -> Gst.Element:
         fallbackswitch = Gst.ElementFactory.make("fallbackswitch")
         assert fallbackswitch is not None
-        fallbackswitch.set_property("name", "fallbackswitch-in")
+        fallbackswitch.set_property("name", name)
         # fallbackswitch.set_property("min-upstream-latency", self.JITTER_BUFFER_LATENCY)
         switch_pad_tmpl = fallbackswitch.get_pad_template("sink_%u")
         assert switch_pad_tmpl is not None
@@ -329,6 +329,7 @@ class GstAVPipeline:
 
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         self._logger.info("Set up stereo audio pipeline")
+
         alsasrc = self._add_alsasrc(self._lowlatencyaudio)
         self._webrtcdsp = self._add_webrtcdsp()
         queue_audio = self._add_queue()
@@ -347,7 +348,7 @@ class GstAVPipeline:
 
     def _set_audio_playback(self) -> None:
         audiotestsrc = self._add_audiotestsrc()
-        fallbackswitch = self._add_fallbackswitch()
+        fallbackswitch = self._add_fallbackswitch("fallbackswitch-in")
         webrtcechoprobe = self._add_webrtcechoprobe()
         audioconvert = self._add_audioconvert()
         audioresample = self._add_audioresample()
@@ -431,44 +432,18 @@ class GstAVPipeline:
             self._thread_bus_calls.join()
             self._thread_bus_calls = None
 
-    def _process_error_msg(self, err: str, loop) -> bool:  # type: ignore[no-untyped-def]
-        if "gst-resource-error-quark" in err:
-
-            if "Could not open audio device for recording" in err:
-                self._logger.error("Emergency stop")
-                self._stop_event.set()
-                return False
-
-            self._logger.error("USB speaker disconnected. Dropping output audio")
-            valve = self._pipeline.get_by_name("safety-valve")
-            if valve is not None:
-                # assert valve is not None
-                valve.set_property("drop", True)
-                alsasink = self._pipeline.get_by_name("speaker")
-                assert alsasink is not None
-                alsasink.set_state(Gst.State.NULL)
-
-                # alsasrc = self._pipeline.get_by_name("microphones")
-                # assert alsasrc is not None
-                # alsasrc.set_state(Gst.State.NULL)
-
-                self._usb_speaker_connected = False
-                if self._usb_monitor_task is None or self._usb_monitor_task.done():
-                    self._usb_monitor_task = self._asyncio_loop.create_task(self._attempt_to_reconnect())
-            return True
-        else:
-            loop.quit()
-            return False
-
     def bus_message_cb(self, bus: Gst.Bus, msg: Gst.Message, loop) -> bool:  # type: ignore[no-untyped-def]
         t = msg.type
         if t == Gst.MessageType.EOS:
             self._logger.error("End-of-stream")
+            self._stop_event.set()
             return False
+
         elif t == Gst.MessageType.ERROR:
             err, debug = msg.parse_error()
             self._logger.error("Error: %s: %s" % (err, debug))
-            return self._process_error_msg(str(err), loop)
+            self._stop_event.set()
+            return False
 
         elif t == Gst.MessageType.STATE_CHANGED:
             if isinstance(msg.src, Gst.Pipeline):
@@ -537,29 +512,21 @@ class GstAVPipeline:
             return False
 
     async def _monitor_usb(self) -> None:
+        """
+        Monitor if the USB speaker is connected. If disconnected the warning message
+        may overflow the message buffer.
+        """
         self._logger.info("Starting monitoring usb ...")
-        while True:
-            self._usb_speaker_connected = self._is_usb_speaker_connected()
-            if not self._usb_speaker_connected:
-                self._logger.warning("USB speaker has been disconnected")
-                await self._removing_webrtcsrc()
+
+        while not self._stop_event.is_set():
+            if not self._is_usb_speaker_connected():
+                self._logger.warning("USB speaker has been disconnected. Dropping output audio")
+                valve = self._pipeline.get_by_name("safety-valve")
+                if valve is not None:
+                    valve.set_property("drop", True)
+                    alsasink = self._pipeline.get_by_name("speaker")
+                    assert alsasink is not None
+                    alsasink.set_state(Gst.State.NULL)
+                    break
             await asyncio.sleep(2)
-
         self._logger.info("Stoping monitoring usb")
-
-    async def _attempt_to_reconnect(self) -> None:
-        # waiting a bit so lsusb get time to refresh
-        await asyncio.sleep(1)
-        while not self._is_usb_speaker_connected():
-            await asyncio.sleep(5)
-            self._logger.info("Waiting for speaker to reconnect ...")
-        self._logger.info("Speaker is back! Connecting back audio")
-        alsasink = self._pipeline.get_by_name("speaker")
-        assert alsasink is not None
-        alsasink.set_state(Gst.State.READY)
-        alsasink.sync_state_with_parent()
-        alsasink.set_state(Gst.State.PLAYING)
-        valve = self._pipeline.get_by_name("safety-valve")
-        assert valve is not None
-        valve.set_property("drop", False)
-        GLib.timeout_add_seconds(1, self.dump_latency)

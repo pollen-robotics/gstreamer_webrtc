@@ -197,7 +197,9 @@ async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
 
     teleop_wrapper = configure_camera(args)
-    latency_ns = compute_camera_latency(teleop_wrapper)
+    latency_ns = 0
+    if teleop_wrapper is not None:
+        latency_ns = compute_camera_latency(teleop_wrapper)
 
     stop_event = asyncio.Event()
 
@@ -224,7 +226,11 @@ async def main_loop(args: argparse.Namespace) -> None:
 
     except KeyboardInterrupt:
         logging.info("User exit")
+    except RuntimeError as e:
+        logging.error(f"Runtime error : {e}")
+        logging.info("Luxonis camera may be unpplugged")
     finally:
+        stop_event.set()
         await avpipeline.stop()
         await avpipeline.cleanup()
 
