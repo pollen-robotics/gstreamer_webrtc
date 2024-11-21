@@ -5,6 +5,7 @@ import numpy as np
 
 gi.require_version("Gst", "1.0")
 import asyncio
+import subprocess
 from threading import Thread
 from typing import Dict, List, Optional, Tuple
 
@@ -20,6 +21,7 @@ class GstAVPipeline:
         signalling_host: str,
         signalling_port: int,
         stream_type: str,
+        stop_event: asyncio.Event,
         lowlatencyaudio: bool = True,
         localnetwork: bool = False,
         peer_audio_name: Optional[str] = None,
@@ -33,6 +35,7 @@ class GstAVPipeline:
         self._stream_type = stream_type
         self._signalling_host = signalling_host
         self._signalling_port = signalling_port
+        self._stop_event = stop_event
         self._appsrc_left: Optional[Gst.Element] = None
         self._appsrc_right: Optional[Gst.Element] = None
         self._lowlatencyaudio = lowlatencyaudio
@@ -41,16 +44,19 @@ class GstAVPipeline:
         self._peer_audio_id = ""
         self._congestion = congestion
         self._aec = aec
-        self.JITTER_BUFFER_LATENCY = 10
+        self.JITTER_BUFFER_LATENCY = 5  # ms
 
         self._thread_bus_calls: Optional[Thread] = None
         self._loop = GLib.MainLoop()
+
+        self._asyncio_loop = asyncio.get_running_loop()
 
         self._webrtcsrc: Optional[Gst.Element] = None
         self._webrtcsrc_count: int = -1
 
         self._peer_audio_listener: Optional[GstSignallingListener] = None
         self._listener_task = None
+        self._usb_monitor_task: Optional[asyncio.Task[None]] = None
         if self._peer_audio_name is not None:
             self._peer_audio_listener = GstSignallingListener(
                 host=signalling_host,
@@ -59,6 +65,11 @@ class GstAVPipeline:
             )
             self._peer_audio_listener.on("PeerStatusChanged", self._handle_peer_status_changed)
             self._listener_task = asyncio.create_task(self._peer_audio_listener.serve4ever())
+
+            # Bus 19f7:0023 RODE Microphones RØDE AI-Micro
+            self.VENDOR_ID = "19f7"
+            self.PRODUCT_ID = "0023"
+            self._usb_monitor_task = self._asyncio_loop.create_task(self._monitor_usb())
 
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
@@ -70,6 +81,8 @@ class GstAVPipeline:
     async def cleanup(self) -> None:
         if self._listener_task:
             self._listener_task.cancel()
+        if self._usb_monitor_task:
+            self._usb_monitor_task.cancel()
         if self._peer_audio_listener:
             await self._peer_audio_listener.close()
 
@@ -165,6 +178,7 @@ class GstAVPipeline:
     def _add_alsasrc(self, lowlatencydevice: bool = True) -> Gst.Element:
         alsasrc = Gst.ElementFactory.make("alsasrc")
         assert alsasrc is not None
+        alsasrc.set_property("name", "microphones")
         if lowlatencydevice:
             alsasrc.set_property("device", "lowlatencysrc")
         alsasrc.set_property("buffer-time", 30000)
@@ -175,6 +189,7 @@ class GstAVPipeline:
     def _add_alsasink(self, lowlatencydevice: bool = True) -> Gst.Element:
         alsasink = Gst.ElementFactory.make("alsasink")
         assert alsasink is not None
+        alsasink.set_property("name", "speaker")
         if lowlatencydevice:
             alsasink.set_property("device", "lowlatencysink")
         alsasink.set_property("buffer-time", 30000)
@@ -194,10 +209,10 @@ class GstAVPipeline:
         self._pipeline.add(audiotestsrc)
         return audiotestsrc
 
-    def _add_fallbackswitch(self) -> Gst.Element:
+    def _add_fallbackswitch(self, name: str) -> Gst.Element:
         fallbackswitch = Gst.ElementFactory.make("fallbackswitch")
         assert fallbackswitch is not None
-        fallbackswitch.set_property("name", "fallbackswitch-in")
+        fallbackswitch.set_property("name", name)
         # fallbackswitch.set_property("min-upstream-latency", self.JITTER_BUFFER_LATENCY)
         switch_pad_tmpl = fallbackswitch.get_pad_template("sink_%u")
         assert switch_pad_tmpl is not None
@@ -209,6 +224,14 @@ class GstAVPipeline:
         switch_pad.set_property("priority", 10)
         self._pipeline.add(fallbackswitch)
         return fallbackswitch
+
+    def _add_valve(self) -> Gst.Element:
+        valve = Gst.ElementFactory.make("valve")
+        assert valve is not None
+        valve.set_property("name", "safety-valve")
+        valve.set_property("drop-mode", 1)
+        self._pipeline.add(valve)
+        return valve
 
     def _add_opus_enc(self) -> Tuple[Gst.Element, Gst.Element]:
         opusenc = Gst.ElementFactory.make("opusenc")
@@ -306,6 +329,7 @@ class GstAVPipeline:
 
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         self._logger.info("Set up stereo audio pipeline")
+
         alsasrc = self._add_alsasrc(self._lowlatencyaudio)
         self._webrtcdsp = self._add_webrtcdsp()
         queue_audio = self._add_queue()
@@ -324,10 +348,11 @@ class GstAVPipeline:
 
     def _set_audio_playback(self) -> None:
         audiotestsrc = self._add_audiotestsrc()
-        fallbackswitch = self._add_fallbackswitch()
+        fallbackswitch = self._add_fallbackswitch("fallbackswitch-in")
         webrtcechoprobe = self._add_webrtcechoprobe()
         audioconvert = self._add_audioconvert()
         audioresample = self._add_audioresample()
+        valve = self._add_valve()
         alsasink = self._add_alsasink(self._lowlatencyaudio)
 
         if not Gst.Element.link(audiotestsrc, fallbackswitch):
@@ -338,8 +363,10 @@ class GstAVPipeline:
             self._logger.error("Failed to link webrtcprobe -> audioconvert")
         if not Gst.Element.link(audioconvert, audioresample):
             self._logger.error("Failed to link audioconvert -> audioresample")
-        if not Gst.Element.link(audioresample, alsasink):
-            self._logger.error("Failed to link audioresample -> alsasink")
+        if not Gst.Element.link(audioresample, valve):
+            self._logger.error("Failed to link audioresample -> valve")
+        if not Gst.Element.link(valve, alsasink):
+            self._logger.error("Failed to link valve -> alsasink")
 
     def make_pipeline(self, cam_latency: int = 0) -> None:
         webrtcsink = self._add_webrtcink()
@@ -399,7 +426,7 @@ class GstAVPipeline:
     async def stop(self) -> None:
         self._pipeline.set_state(Gst.State.NULL)
         self._logger.info("Pipeline stopped")
-        # Gst.deinit()
+
         if self._thread_bus_calls:
             self._loop.quit()
             self._thread_bus_calls.join()
@@ -409,12 +436,15 @@ class GstAVPipeline:
         t = msg.type
         if t == Gst.MessageType.EOS:
             self._logger.error("End-of-stream")
+            self._stop_event.set()
             return False
+
         elif t == Gst.MessageType.ERROR:
             err, debug = msg.parse_error()
             self._logger.error("Error: %s: %s" % (err, debug))
-            loop.quit()
+            self._stop_event.set()
             return False
+
         elif t == Gst.MessageType.STATE_CHANGED:
             if isinstance(msg.src, Gst.Pipeline):
                 old_state, new_state, pending_state = msg.parse_state_changed()
@@ -441,6 +471,7 @@ class GstAVPipeline:
         self._logger.debug("Stopping bus call loop")
 
     async def _removing_webrtcsrc(self) -> None:
+        self._peer_audio_id = ""
         if self._webrtcsrc is not None:
             self._webrtcsrc.set_state(Gst.State.NULL)
             self._pipeline.remove(self._webrtcsrc)
@@ -466,10 +497,36 @@ class GstAVPipeline:
         if meta is None:
             pass
         elif peer_id == self._peer_audio_id and meta["name"] == self._peer_audio_name:
-            self._peer_audio_id = ""
             await self._removing_webrtcsrc()
             self._logger.info(f"Operator {self._peer_audio_id} is disconnected")
         elif self._peer_audio_id == "" and meta["name"] == self._peer_audio_name and "producer" in roles:
             self._peer_audio_id = peer_id
             await self._adding_webrtcsrc(self._peer_audio_id)
             self._logger.info(f"Operator is connected with id : {self._peer_audio_id}")
+
+    def _is_usb_speaker_connected(self) -> bool:
+        output = subprocess.check_output(["lsusb"])
+        if f"{self.VENDOR_ID}:{self.PRODUCT_ID}" in output.decode("utf-8"):
+            return True
+        else:
+            return False
+
+    async def _monitor_usb(self) -> None:
+        """
+        Monitor if the USB speaker is connected. If disconnected the warning message
+        may overflow the message buffer.
+        """
+        self._logger.info("Starting monitoring usb ...")
+
+        while not self._stop_event.is_set():
+            if not self._is_usb_speaker_connected():
+                self._logger.warning("USB speaker has been disconnected. Dropping output audio")
+                valve = self._pipeline.get_by_name("safety-valve")
+                if valve is not None:
+                    valve.set_property("drop", True)
+                    alsasink = self._pipeline.get_by_name("speaker")
+                    assert alsasink is not None
+                    alsasink.set_state(Gst.State.NULL)
+                    break
+            await asyncio.sleep(2)
+        self._logger.info("Stoping monitoring usb")
