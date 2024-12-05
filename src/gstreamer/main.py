@@ -184,11 +184,12 @@ def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.Abstract
     executor.add_node(rospublisher_right_cam)
     executor_thread = Thread(target=executor.spin, daemon=True)
     executor_thread.start()
+    # Note : this loop takes most of the CPU usage. see ros_publisher.py
     while True:
         data, latency, _ = teleop_wrapper.get_data_mjpeg()
         rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes(), latency["left_mjpeg"].microseconds * 1000)
         rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes(), latency["right_mjpeg"].microseconds * 1000)
-        time.sleep(0.01)
+        time.sleep(0.03)  # ~30 fps
     # executor.shutdown()
 
 
