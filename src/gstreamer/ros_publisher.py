@@ -27,7 +27,9 @@ class ROSPublisher(Node):  # type: ignore[misc]
         self._compr_img.format = "jpeg"
         self._compr_img.header.frame_id = f"{side}_camera_optical"
 
-        self._camera_info_publisher = self.create_publisher(CameraInfo, f"teleop_camera/{self._side}_image/camera_info", 5)
+        self._camera_info_publisher = self.create_publisher(
+            CameraInfo, f"teleop_camera/{self._side}_image/image_raw/camera_info", 5
+        )
         self._logger.info(f'Launching "{self._camera_info_publisher.topic_name}" publisher.')
 
         self._camera_info = CameraInfo()
@@ -50,7 +52,7 @@ class ROSPublisher(Node):  # type: ignore[misc]
         offset_duration = Duration(nanoseconds=latency_ns)
         ts = self._clock.now() - offset_duration
         self._compr_img.header.stamp = ts.to_msg()
-        self._compr_img.data = frame
+        self._compr_img.data = frame  # Note: there is probably a copy here, hence the high CPU usage
         self._camera_publisher.publish(self._compr_img)
 
     async def _publish_camera_info(self, side: str) -> None:
