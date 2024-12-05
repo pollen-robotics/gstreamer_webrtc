@@ -9,9 +9,12 @@ from sensor_msgs.msg._compressed_image import CompressedImage
 
 
 class ROSPublisher(Node):  # type: ignore[misc]
-    def __init__(self, cam_config: CamConfig, side: str, asyncio_loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self, cam_config: CamConfig, side: str, asyncio_loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
+    ) -> None:
         super().__init__(f"teleop_camera_publisher_{side}")
         self._logger = logging.getLogger(__name__)
+        self._stop_event = stop_event
         self._clock = self.get_clock()
         self._side = side
 
@@ -54,7 +57,7 @@ class ROSPublisher(Node):  # type: ignore[misc]
 
     async def _publish_camera_info(self, side: str) -> None:
         """Publish camera info for the requested side."""
-        while True:
+        while not self._stop_event.is_set():
             self._camera_info.header.stamp = self._clock.now().to_msg()
             self._camera_info_publisher.publish(self._camera_info)
             await asyncio.sleep(1)

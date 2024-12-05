@@ -147,7 +147,7 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
 
 
 def configure_pipeline(
-    args: argparse.Namespace, latency_ns: int, peer_id: str
+    args: argparse.Namespace, latency_ns: int, peer_id: str, stop_event: asyncio.Event
 ) -> Tuple[GstAVPipeline, Optional[Gst.Element], Optional[Gst.Element]]:
     logging.info("Configuring gstreamer pipeline...")
     avpipeline = GstAVPipeline(
@@ -155,6 +155,7 @@ def configure_pipeline(
         args.signaling_host,
         args.signaling_port,
         stream_type=args.stream,
+        stop_event=stop_event,
         lowlatencyaudio=args.lowlatencyaudio,
         localnetwork=args.localnetwork,
         peer_audio_name=peer_id,
@@ -175,17 +176,16 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop) -> None:
+def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     rclpy.init()
     executor = MultiThreadedExecutor()
-    rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop)
-    rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right", asyncio_loop)
+    rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop, stop_event)
+    rospublisher_right_cam = ROSPublisher(teleop_wrapper.cam_config, "right", asyncio_loop, stop_event)
     executor.add_node(rospublisher_left_cam)
     executor.add_node(rospublisher_right_cam)
     executor_thread = Thread(target=executor.spin, daemon=True)
     executor_thread.start()
-    # Note : this loop takes most of the CPU usage. see ros_publisher.py
-    while True:
+    while not stop_event.is_set():
         data, latency, _ = teleop_wrapper.get_data_mjpeg()
         rospublisher_left_cam.publish_img(data["left_mjpeg"].tobytes(), latency["left_mjpeg"].microseconds * 1000)
         rospublisher_right_cam.publish_img(data["right_mjpeg"].tobytes(), latency["right_mjpeg"].microseconds * 1000)
@@ -197,18 +197,22 @@ async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
 
     teleop_wrapper = configure_camera(args)
-    latency_ns = compute_camera_latency(teleop_wrapper)
+    latency_ns = 0
+    if teleop_wrapper is not None:
+        latency_ns = compute_camera_latency(teleop_wrapper)
 
-    avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name)
+    stop_event = asyncio.Event()
+
+    avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name, stop_event)
 
     await avpipeline.start()
 
     if args.ros:
-        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop()), daemon=True)
+        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop(), stop_event), daemon=True)
         thread_ros.start()
 
     try:
-        while True:
+        while not stop_event.is_set():
             if teleop_wrapper:
                 data, latency, _ = teleop_wrapper.get_data_h264()
                 # print(str(latency))
@@ -222,7 +226,11 @@ async def main_loop(args: argparse.Namespace) -> None:
 
     except KeyboardInterrupt:
         logging.info("User exit")
+    except RuntimeError as e:
+        logging.error(f"Runtime error : {e}")
+        logging.info("Luxonis camera may be unpplugged")
     finally:
+        stop_event.set()
         await avpipeline.stop()
         await avpipeline.cleanup()
 
