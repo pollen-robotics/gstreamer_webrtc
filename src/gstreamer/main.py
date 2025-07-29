@@ -21,8 +21,9 @@ from pollen_vision.camera_wrappers.depthai.utils import (
 )
 from rclpy.executors import MultiThreadedExecutor
 
-from gstreamer.avpipeline import GstAVPipeline
+from gstreamer.avpipeline import GstAVPipeline, CameraUserData
 from gstreamer.ros_publisher import ROSPublisher
+from datetime import timedelta
 
 
 def parse_args() -> argparse.Namespace:
@@ -143,7 +144,10 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
     # tip gstreamer: reduce latency of one frame since h264parse is adding one frame latency
     offset = (int)(1.0 / teleop_wrapper.cam_config.fps * 1_000_000_000)
 
-    return min(latencies) - offset
+    logging.info(f"Camera latency : {min(latencies)} ns")
+    logging.info(f"Camera latency offset : {offset} ns")
+
+    return min(latencies) #- offset
 
 
 def configure_pipeline(
@@ -195,6 +199,7 @@ def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.Abstract
 
 async def main_loop(args: argparse.Namespace) -> None:
     logging.info("Starting teleoperation")
+    logging.info("Dev mode")
 
     teleop_wrapper = configure_camera(args)
     latency_ns = 0
@@ -204,6 +209,9 @@ async def main_loop(args: argparse.Namespace) -> None:
     stop_event = asyncio.Event()
 
     avpipeline, video_left, video_right = configure_pipeline(args, latency_ns, args.remote_producer_name, stop_event)
+    appsink_udata_left = CameraUserData(video_left)
+    appsink_udata_right = CameraUserData(video_right)
+
 
     await avpipeline.start()
 
@@ -211,13 +219,21 @@ async def main_loop(args: argparse.Namespace) -> None:
         thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop(), stop_event), daemon=True)
         thread_ros.start()
 
+    _,_, first_ts = teleop_wrapper.get_data_h264()
+    first_ts = first_ts.copy()
     try:
         while not stop_event.is_set():
             if teleop_wrapper:
-                data, latency, _ = teleop_wrapper.get_data_h264()
-                # print(str(latency))
-                avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
-                avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                data, latency, ts = teleop_wrapper.get_data_h264()
+                #print(str(latency))
+                #logging.debug(f"Left latency : {latency['left']}, Right latency : {latency['right']}")
+                #logging.debug(f"ts: {ts['left']} {ts['left'].microseconds * 1000} ns")
+                clock = (ts["left"] - first_ts["left"]) / timedelta(microseconds=1) * 1000  # convert to ns
+                #logging.debug(f"clock : {clock / timedelta(microseconds=1) * 1000} ns ts : {ts['left']} first_ts : {first_ts['left']} ns")
+                #logging.debug(f"Left latency : {latency['left'].microseconds * 1000} ns, Right latency : {latency['right'].microseconds * 1000} ns")
+                #avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
+                #avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                avpipeline.push_frame(appsink_udata_left, data["left"], clock,  latency["left"].microseconds * 1000)
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:

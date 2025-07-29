@@ -4,6 +4,8 @@ import gi
 import numpy as np
 
 gi.require_version("Gst", "1.0")
+gi.require_version("GstApp", "1.0")
+from gi.repository import GstApp
 import asyncio
 import subprocess
 from threading import Thread
@@ -12,6 +14,20 @@ from typing import Dict, List, Optional, Tuple
 import numpy.typing as npt
 from gi.repository import GLib, Gst
 from gst_signalling import GstSignallingListener
+
+class CameraUserData:
+    def __init__(self, appsrc):
+        self.appsrc = appsrc
+            
+        # A clock slaved to the pipeline's clock to adjust the camera's
+        # timestamps, preventing them from diverging
+        self.camera_clock = Gst.SystemClock()
+        self.camera_clock.set_name("camera-clock")
+        self.camera_clock.set_property("clock-type", Gst.ClockType.MONOTONIC)
+
+        self.got_first_buf = False
+        self.first_buf_rt = 0
+        self.first_buf_ts = 0
 
 
 class GstAVPipeline:
@@ -73,6 +89,13 @@ class GstAVPipeline:
 
         Gst.init(None)
         self._pipeline = Gst.Pipeline.new()
+        clock = Gst.SystemClock.obtain()
+        if clock is None:
+            self._logger.error("No system clock")
+            return
+        self._pipeline.set_clock(clock)
+        self._pipeline.set_base_time(0)
+        self._pipeline.set_start_time(Gst.CLOCK_TIME_NONE)
 
     def __del__(self) -> None:
         self._logger.info("stopped ")
@@ -85,6 +108,7 @@ class GstAVPipeline:
             self._usb_monitor_task.cancel()
         if self._peer_audio_listener:
             await self._peer_audio_listener.close()
+        Gst.deinit()
 
     def get_appsrc(self, name: str) -> Optional[Gst.Element]:
         if name == "left":
@@ -113,11 +137,22 @@ class GstAVPipeline:
         for sink in new_elements:
             name = sink.get_name()
             self._logger.info(f"set processing deadline for {name}")
-            sink.set_property("processing-deadline", 1_000_000)
+            #sink.set_property("processing-deadline", 1_000_000)
 
-        # Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
+        Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_full")
 
         GLib.timeout_add_seconds(5, self.dump_latency)
+
+    def _on_webrtcbin_ready(self, signaller, session_id, webrtcbin, webrtcsink):
+        def configure_clocksync(elem):
+            elem.set_property("sync", False)
+        webrtcsink.iterate_all_by_element_factory_name("clocksync").foreach(configure_clocksync)
+
+        def configure_appsink(elem):
+            elem.set_property("processing-deadline", 0)
+            elem.set_property("sync", False)
+        webrtcsink.iterate_all_by_element_factory_name("appsink").foreach(configure_appsink)
+        self._logger.info("webrtcsink configured")
 
     def _add_webrtcink(self) -> Gst.Element:
         webrtcsink = Gst.ElementFactory.make("webrtcsink")
@@ -132,8 +167,9 @@ class GstAVPipeline:
             webrtcsink.set_property("congestion-control", "disabled")
         self._signaller = webrtcsink.get_property("signaller")
         self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
+        self._signaller.connect("webrtcbin-ready", self._on_webrtcbin_ready, webrtcsink)
 
-        webrtcsink.connect("consumer-added", self._consumer_added)
+        #webrtcsink.connect("consumer-added", self._consumer_added)
 
         self._pipeline.add(webrtcsink)
         return webrtcsink
@@ -148,18 +184,30 @@ class GstAVPipeline:
         appsrc.set_property("min-latency", cam_latency_ns)
         appsrc.set_property("max-buffers", 100)
         self._logger.info(f"Video latency configured to {cam_latency_ns}")
+
+        #video_caps = Gst.caps_from_string("video/x-raw, format=NV12, width=960, height=720, framerate=60/1")
+        video_caps = Gst.caps_from_string("video/x-h264,stream-format=byte-stream,alignment=au")
+        assert video_caps is not None
+        appsrc.set_property("caps", video_caps)
+
         self._pipeline.add(appsrc)
         return appsrc
 
-    def _add_h264parse(self) -> Gst.Element:
+    def _add_h264parse(self, name : str) -> Gst.Element:
         h264parse = Gst.ElementFactory.make("h264parse")
         assert h264parse is not None
+        h264parse.set_property("name", name)
         self._pipeline.add(h264parse)
         return h264parse
 
-    def _add_queue(self) -> Gst.Element:
+    def _add_queue(self, name : str, single_buffer : bool = False) -> Gst.Element:
         queue = Gst.ElementFactory.make("queue")
         assert queue is not None
+        queue.set_property("name", name)
+        if single_buffer:
+            queue.set_property("max-size-buffers", 1)
+            queue.set_property("max-size-bytes", 0)
+            queue.set_property("max-size-time", 0)
         self._pipeline.add(queue)
         return queue
 
@@ -310,12 +358,34 @@ class GstAVPipeline:
         self._pipeline.add(webrtcechoprobe)
         return webrtcechoprobe
 
+    def _add_fakesink(self) -> Gst.Element:
+        fakesink = Gst.ElementFactory.make("fakesink")
+        assert fakesink is not None
+        self._pipeline.add(fakesink)
+        return fakesink
+
+    def _add_gdppay(self) -> Gst.Element:
+        gdppay = Gst.ElementFactory.make("gdppay")
+        assert gdppay is not None
+        self._pipeline.add(gdppay)
+        return gdppay
+
+    def _add_filesink(self) -> Gst.Element:
+        filesink = Gst.ElementFactory.make("filesink")
+        assert filesink is not None
+        filesink.set_property("location", f"video.gdp")
+        self._pipeline.add(filesink)
+        return filesink
+
     def _set_stereo_video(self, webrtcsink: Gst.Element, cam_latency: int) -> None:
         self._logger.info("Set up stereo video pipeline")
         self._appsrc_left = self._add_appsrc("src_left", cam_latency)
-        self._appsrc_right = self._add_appsrc("src_right", cam_latency)
-        h264parse_left = self._add_h264parse()
-        h264parse_right = self._add_h264parse()
+        #self._appsrc_right = self._add_appsrc("src_right", cam_latency)
+        #queue_left = self._add_queue("queue_left", single_buffer=True)
+        #queue_right = self._add_queue("queue_right", single_buffer=True)
+        '''
+        h264parse_left = self._add_h264parse("h264parse_left")
+        h264parse_right = self._add_h264parse("h264parse_right")
 
         if not Gst.Element.link(self._appsrc_left, h264parse_left):
             self._logger.error("Failed to link appsrc -> h264parse")
@@ -326,13 +396,45 @@ class GstAVPipeline:
             self._logger.error("Failed to link appsrc -> h264parse")
         if not Gst.Element.link(h264parse_right, webrtcsink):
             self._logger.error("Failed to link h264parse -> webrtcsink")
+        '''            
+
+        
+        if not Gst.Element.link(self._appsrc_left, webrtcsink):
+            self._logger.error("Failed to link appsrc -> webrtcsink")
+        #if not Gst.Element.link(self._appsrc_right, webrtcsink):
+        #    self._logger.error("Failed to link appsrc_right -> webrtcsink")
+        
+        
+        #if not Gst.Element.link(self._appsrc_left, queue_left):
+        #    self._logger.error("Failed to link appsrc -> queue_left")
+        #if not Gst.Element.link(queue_left, webrtcsink):
+        #    self._logger.error("Failed to link queue_left -> webrtcsink")
+        #if not Gst.Element.link(self._appsrc_right, queue_right):
+        #    self._logger.error("Failed to link appsrc_right -> queue_right")
+        #if not Gst.Element.link(queue_right, webrtcsink):
+        #    self._logger.error("Failed to link queue_right -> webrtcsink")
+        
+
+        '''
+        fakesink = self._add_fakesink()
+        if not Gst.Element.link(self._appsrc_left, fakesink):
+            self._logger.error("Failed to link appsrc_left -> fakesink")
+        '''
+        '''
+        gdppay = self._add_gdppay()
+        filesink = self._add_filesink()
+        if not Gst.Element.link(self._appsrc_left, gdppay):
+            self._logger.error("Failed to link appsrc_left -> gdppay")
+        if not Gst.Element.link(gdppay, filesink):
+            self._logger.error("Failed to link gdppay -> filesink")
+        '''
 
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         self._logger.info("Set up stereo audio pipeline")
 
         alsasrc = self._add_alsasrc(self._lowlatencyaudio)
         self._webrtcdsp = self._add_webrtcdsp()
-        queue_audio = self._add_queue()
+        queue_audio = self._add_queue("queue_audio")
         opusenc, audio_caps = self._add_opus_enc()
 
         if not Gst.Element.link(alsasrc, self._webrtcdsp):
@@ -382,7 +484,10 @@ class GstAVPipeline:
         if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
             self._logger.error(f"Failed to transition pipeline to READY: {ret}")
 
-    def push_frame(self, appsrc: Gst.Element, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:
+        #Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_gdppay")
+
+    #def push_frame(self, appsrc: Gst.Element, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:
+        '''
         clock = appsrc.get_clock()
         if clock is None:
             self._logger.warning("Pipeline is not playing")
@@ -401,11 +506,68 @@ class GstAVPipeline:
             self._logger.warning("Skipping early captured frame")
             return
 
-        buf = Gst.Buffer.new_wrapped(data.tobytes())
-        buf.pts = Gst.CLOCK_TIME_NONE
-        buf.dts = time - latency_ns
+        buf = Gst.Buffer.new_wrapped(data.tobytes())        
+        ts = time - latency_ns
+        buf.dts = ts
+        buf.pts = ts
 
-        appsrc.emit("push-buffer", buf)
+        appsrc.emit("push-buffer", buf)        
+        '''
+        '''
+        time = appsrc.get_current_running_time()
+        if time == Gst.CLOCK_TIME_NONE:
+          self._logger.warning("Pipeline is not playing")
+          return
+
+        if latency_ns > time:
+          # This frame was captured before the pipeline was started
+          # It could be a good time to request a keyframe
+          self._logger.warning("Skipping early captured frame")
+          return
+
+        buf = Gst.Buffer.new_wrapped(data.tobytes())
+        ts = time - latency_ns
+        buf.pts = ts
+        buf.dts = ts
+
+        appsrc.push_buffer(buf)
+        '''
+
+    def push_frame(self, udata: CameraUserData, data: npt.NDArray[np.uint8], camera_ts: int = 0, latency_ns: int = 0) -> None:
+        rt = udata.appsrc.get_current_running_time()
+
+        # adjust buffer timestamp since the camera uses a different clock
+
+        if not udata.got_first_buf:
+            udata.first_buf_rt = rt
+            udata.first_buf_ts = camera_ts
+            udata.got_first_buf = True
+
+            # Request a key frame
+            #s = Gst.Structure.new_empty("GstForceKeyUnit")
+            #e = Gst.Event.new_custom(Gst.EventType.CUSTOM_UPSTREAM, s)
+            #appsink.get_static_pad("sink").push_event(e)
+
+        # add observations to compute a linear regression
+        # of incoming ts / the pipeline's clock
+        res, _ = udata.camera_clock.add_observation(camera_ts - udata.first_buf_ts, rt)
+        if not res:
+            # Not enough observations for the linear regression
+            return Gst.FlowReturn.OK
+        
+        adjusted_ts = udata.camera_clock.adjust_unlocked(camera_ts - udata.first_buf_ts)
+
+        ts = adjusted_ts #- latency_ns
+        if ts < 0:
+            return Gst.FlowReturn.OK
+
+        buf = Gst.Buffer.new_wrapped(data.tobytes())
+        buf.pts = ts
+        buf.dts = ts
+
+        udata.appsrc.push_buffer(buf)
+        return Gst.FlowReturn.OK
+
 
     def dump_latency(self) -> None:
         query = Gst.Query.new_latency()
