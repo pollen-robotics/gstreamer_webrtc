@@ -6,7 +6,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst, GstApp
+from gi.repository import GLib, Gst, GstApp  # type: ignore [attr-defined]
 from gst_signalling.utils import find_producer_peer_id_by_name
 
 
@@ -16,16 +16,14 @@ class GstRecorder:
     ) -> None:
         Gst.init(None)
         self._loop = GLib.MainLoop()
-        self._thread_bus_calls = None
+        self._thread_bus_calls: Optional[Thread] = None
         self._left_image_lock = Lock()
         self._right_image_lock = Lock()
 
         self.pipeline = Gst.Pipeline.new("webRTC-recorder")
         self.source = Gst.ElementFactory.make("webrtcsrc")
-        self.appink_left = None
-        self.appink_right = None
-        self._left_image = None
-        self._right_image = None
+        self._left_image: Optional[bytes] = None
+        self._right_image: Optional[bytes] = None
 
         if not self.pipeline:
             print("Pipeline could be created.")
@@ -54,6 +52,9 @@ class GstRecorder:
         sample = sink.pull_sample()
         if isinstance(sample, Gst.Sample):
             buf = sample.get_buffer()
+            if buf is None:
+                print("Buffer is None")
+                return Gst.FlowReturn.ERROR
             img = buf.extract_dup(0, buf.get_size())
             if udata:
                 with self._left_image_lock:
@@ -76,7 +77,9 @@ class GstRecorder:
         return img
 
     def webrtcsrc_pad_added_cb(self, webrtcsrc: Gst.Element, pad: Gst.Pad) -> None:
-        if pad.get_name().startswith("video"):  # type: ignore[union-attr]
+        pad_name = pad.get_name()
+        assert pad_name is not None, "Pad name should not be None"
+        if pad_name.startswith("video"):
             print("video channel received: ", pad.get_name())
             videodepay = Gst.ElementFactory.make("rtph264depay")
             assert videodepay is not None
@@ -100,7 +103,7 @@ class GstRecorder:
             sink.set_property("drop", True)
             sink.set_property("emit-signals", True)
 
-            if pad.get_name().endswith("_0"):
+            if pad_name.endswith("_0"):
                 sink.connect("new-sample", self.new_sample, True)
             else:
                 sink.connect("new-sample", self.new_sample, False)
@@ -127,7 +130,7 @@ class GstRecorder:
             decoder.sync_state_with_parent()
             jpegenc.sync_state_with_parent()
             sink.sync_state_with_parent()
-        elif pad.get_name().startswith("audio"):  # type: ignore[union-attr]
+        elif pad_name.startswith("audio"):
             print("audio channel ignored")
             fakesink = Gst.ElementFactory.make("fakesink")
             assert fakesink is not None
