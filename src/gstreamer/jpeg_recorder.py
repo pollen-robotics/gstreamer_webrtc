@@ -17,7 +17,8 @@ class GstRecorder:
         Gst.init(None)
         self._loop = GLib.MainLoop()
         self._thread_bus_calls = None
-        self._image_lock = Lock()
+        self._left_image_lock = Lock()
+        self._right_image_lock = Lock()
 
         self.pipeline = Gst.Pipeline.new("webRTC-recorder")
         self.source = Gst.ElementFactory.make("webrtcsrc")
@@ -48,26 +49,28 @@ class GstRecorder:
         signaller.set_property("producer-peer-id", peer_id)
         signaller.set_property("uri", f"ws://{signalling_host}:{signalling_port}")
 
-    def new_sample(self, sink: GstApp.AppSink, udata) -> Gst.FlowReturn:
+    def new_sample(self, sink: GstApp.AppSink, udata: bool) -> Gst.FlowReturn:
         """Callback on 'new-sample' signal"""
         sample = sink.pull_sample()
         if isinstance(sample, Gst.Sample):
             buf = sample.get_buffer()
             img = buf.extract_dup(0, buf.get_size())
-            with self._image_lock:
-                if udata:
+            if udata:
+                with self._left_image_lock:
                     self._left_image = img
-                else:
+            else:
+                with self._right_image_lock:
                     self._right_image = img
         return Gst.FlowReturn.OK
 
-    def get_image(self, left=False) -> Optional[bytes]:
+    def get_image(self, left: bool = False) -> Optional[bytes]:
         """Get the latest image from the appsrc (thread-safe, blocking lock)"""
-        with self._image_lock:
-            if left:
+        if left:
+            with self._left_image_lock:
                 img = self._left_image
                 self._left_image = None
-            else:
+        else:
+            with self._right_image_lock:
                 img = self._right_image
                 self._right_image = None
         return img
