@@ -134,6 +134,7 @@ def configure_camera(args: argparse.Namespace) -> TeleopWrapper:
 
 def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
     """Return the minimum latency in nanosecs for configuring gstreamer appsrc"""
+    return 30_000_000
     logging.info("Compute camera latency...")
     latencies: List[int] = []
     if teleop_wrapper is not None:
