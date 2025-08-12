@@ -63,8 +63,12 @@ class GstAVPipeline:
                 port=signalling_port,
                 name=self._peer_audio_name,
             )
-            self._peer_audio_listener.on("PeerStatusChanged", self._handle_peer_status_changed)
-            self._listener_task = asyncio.create_task(self._peer_audio_listener.serve4ever())
+            self._peer_audio_listener.on(
+                "PeerStatusChanged", self._handle_peer_status_changed
+            )
+            self._listener_task = asyncio.create_task(
+                self._peer_audio_listener.serve4ever()
+            )
 
             # Bus 19f7:0023 RODE Microphones RØDE AI-Micro
             self.VENDOR_ID = "19f7"
@@ -92,10 +96,14 @@ class GstAVPipeline:
         elif name == "right":
             return self._appsrc_right
         else:
-            self._logger.warning("Unknow appsrc name : f{name}. Should be left or right.")
+            self._logger.warning(
+                "Unknow appsrc name : f{name}. Should be left or right."
+            )
             return None
 
-    def _consumer_added(self, webrtcbin: Gst.Bin, arg1: Gst.Element, udata: bytes) -> None:
+    def _consumer_added(
+        self, webrtcbin: Gst.Bin, arg1: Gst.Element, udata: bytes
+    ) -> None:
         self._logger.info("consumer added")
 
         elements = webrtcbin.iterate_all_by_element_factory_name("appsink")
@@ -125,13 +133,17 @@ class GstAVPipeline:
         meta_structure = Gst.Structure.new_empty("meta")
         meta_structure.set_value("name", self._name)
         webrtcsink.set_property("meta", meta_structure)
-        webrtcsink.set_property("do-retransmission", False)  # lost packets will arrive too late anyway
+        webrtcsink.set_property(
+            "do-retransmission", False
+        )  # lost packets will arrive too late anyway
         if self._localnetwork:
             webrtcsink.set_property("stun-server", None)
         if not self._congestion:
             webrtcsink.set_property("congestion-control", "disabled")
         self._signaller = webrtcsink.get_property("signaller")
-        self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
+        self._signaller.set_property(
+            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
+        )
 
         webrtcsink.connect("consumer-added", self._consumer_added)
 
@@ -198,7 +210,7 @@ class GstAVPipeline:
         self._pipeline.add(alsasink)
         return alsasink
 
-    def _add_audiotestsrc(self) -> Gst.Element:
+    def _add_audiotestsrc(self) -> Tuple[Gst.Element, Gst.Element]:
         """audio silent stream used to feed alsasink before user connects"""
         audiotestsrc = Gst.ElementFactory.make("audiotestsrc")
         assert audiotestsrc is not None
@@ -207,7 +219,16 @@ class GstAVPipeline:
         # Send buffers the size of the remote branch (10ms @ 8kHz)
         audiotestsrc.set_property("samplesperbuffer", 80)
         self._pipeline.add(audiotestsrc)
-        return audiotestsrc
+
+        audio_caps = Gst.caps_from_string("audio/x-raw")
+        assert audio_caps is not None
+        audio_caps.set_value("channels", 2)
+        audio_caps_capsfilter = Gst.ElementFactory.make("capsfilter")
+        assert audio_caps_capsfilter is not None
+        audio_caps_capsfilter.set_property("caps", audio_caps)
+        self._pipeline.add(audio_caps_capsfilter)
+
+        return audiotestsrc, audio_caps_capsfilter
 
     def _add_fallbackswitch(self, name: str) -> Gst.Element:
         fallbackswitch = Gst.ElementFactory.make("fallbackswitch")
@@ -284,7 +305,9 @@ class GstAVPipeline:
 
         signaller = webrtcsrc.get_property("signaller")
         signaller.set_property("producer-peer-id", peer_audio_id)
-        signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
+        signaller.set_property(
+            "uri", f"ws://{self._signalling_host}:{self._signalling_port}"
+        )
 
         webrtcsrc.connect("pad-added", self._webrtcsrc_pad_added_cb)
 
@@ -347,7 +370,7 @@ class GstAVPipeline:
             self._logger.error("Failed to link caps -> webrtcsink")
 
     def _set_audio_playback(self) -> None:
-        audiotestsrc = self._add_audiotestsrc()
+        audiotestsrc, audiocaps = self._add_audiotestsrc()
         fallbackswitch = self._add_fallbackswitch("fallbackswitch-in")
         webrtcechoprobe = self._add_webrtcechoprobe()
         audioconvert = self._add_audioconvert()
@@ -355,8 +378,10 @@ class GstAVPipeline:
         valve = self._add_valve()
         alsasink = self._add_alsasink(self._lowlatencyaudio)
 
-        if not Gst.Element.link(audiotestsrc, fallbackswitch):
-            self._logger.error("Failed to link audiotestsrc -> fallbackswitch")
+        if not Gst.Element.link(audiotestsrc, audiocaps):
+            self._logger.error("Failed to link audiotestsrc -> audiocaps")
+        if not Gst.Element.link(audiocaps, fallbackswitch):
+            self._logger.error("Failed to link audiocaps -> fallbackswitch")
         if not Gst.Element.link(fallbackswitch, webrtcechoprobe):
             self._logger.error("Failed to link fallbackswitch -> webrtcprobe")
         if not Gst.Element.link(webrtcechoprobe, audioconvert):
@@ -382,7 +407,9 @@ class GstAVPipeline:
         if ret not in [Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.ASYNC]:
             self._logger.error(f"Failed to transition pipeline to READY: {ret}")
 
-    def push_frame(self, appsrc: Gst.Element, data: npt.NDArray[np.uint8], latency_ns: int = 0) -> None:
+    def push_frame(
+        self, appsrc: Gst.Element, data: npt.NDArray[np.uint8], latency_ns: int = 0
+    ) -> None:
         clock = appsrc.get_clock()
         if clock is None:
             self._logger.warning("Pipeline is not playing")
@@ -448,7 +475,12 @@ class GstAVPipeline:
         elif t == Gst.MessageType.STATE_CHANGED:
             if isinstance(msg.src, Gst.Pipeline):
                 old_state, new_state, pending_state = msg.parse_state_changed()
-                self._logger.info(("Pipeline state changed from %s to %s." % (old_state.value_nick, new_state.value_nick)))
+                self._logger.info(
+                    (
+                        "Pipeline state changed from %s to %s."
+                        % (old_state.value_nick, new_state.value_nick)
+                    )
+                )
                 if old_state.value_nick == "paused" and new_state.value_nick == "ready":
                     self._logger.info("stopping bus message loop")
                     loop.quit()
@@ -458,7 +490,9 @@ class GstAVPipeline:
                 try:
                     self._pipeline.recalculate_latency()
                 except Exception as e:
-                    self._logger.warning("failed to recalculate warning, exception: %s" % str(e))
+                    self._logger.warning(
+                        "failed to recalculate warning, exception: %s" % str(e)
+                    )
         return True
 
     def _handle_bus_calls(self) -> None:
@@ -480,26 +514,43 @@ class GstAVPipeline:
 
     async def _adding_webrtcsrc(self, peer_audio_id: str) -> None:
         while True:
-            state_change_return, state, pending = self._pipeline.get_state(Gst.CLOCK_TIME_NONE)
-            if state_change_return == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
+            state_change_return, state, pending = self._pipeline.get_state(
+                Gst.CLOCK_TIME_NONE
+            )
+            if (
+                state_change_return == Gst.StateChangeReturn.SUCCESS
+                and state == Gst.State.PLAYING
+            ):
                 self._logger.debug("Pipeline is ready and playing")
                 break
             elif state_change_return == Gst.StateChangeReturn.FAILURE:
-                self._logger.error("Failed to get the pipeline state, it might be in an error state")
+                self._logger.error(
+                    "Failed to get the pipeline state, it might be in an error state"
+                )
                 break
             else:
-                self._logger.debug(f"Pipeline is not ready yet, current state: {state.value_nick}")
+                self._logger.debug(
+                    f"Pipeline is not ready yet, current state: {state.value_nick}"
+                )
                 await asyncio.sleep(0.5)
         self._webrtcsrc = self._add_webrtcsrc(peer_audio_id)
 
-    async def _handle_peer_status_changed(self, peer_id: str, roles: List[str], meta: Dict[str, str]) -> None:
-        self._logger.debug(f'Peer "{peer_id}" changed roles to {roles} with meta {meta}')
+    async def _handle_peer_status_changed(
+        self, peer_id: str, roles: List[str], meta: Dict[str, str]
+    ) -> None:
+        self._logger.debug(
+            f'Peer "{peer_id}" changed roles to {roles} with meta {meta}'
+        )
         if meta is None:
             pass
         elif peer_id == self._peer_audio_id and meta["name"] == self._peer_audio_name:
             await self._removing_webrtcsrc()
             self._logger.info(f"Operator {self._peer_audio_id} is disconnected")
-        elif self._peer_audio_id == "" and meta["name"] == self._peer_audio_name and "producer" in roles:
+        elif (
+            self._peer_audio_id == ""
+            and meta["name"] == self._peer_audio_name
+            and "producer" in roles
+        ):
             self._peer_audio_id = peer_id
             await self._adding_webrtcsrc(self._peer_audio_id)
             self._logger.info(f"Operator is connected with id : {self._peer_audio_id}")
@@ -520,7 +571,9 @@ class GstAVPipeline:
 
         while not self._stop_event.is_set():
             if not self._is_usb_speaker_connected():
-                self._logger.warning("USB speaker has been disconnected. Dropping output audio")
+                self._logger.warning(
+                    "USB speaker has been disconnected. Dropping output audio"
+                )
                 valve = self._pipeline.get_by_name("safety-valve")
                 if valve is not None:
                     valve.set_property("drop", True)
