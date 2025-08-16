@@ -198,7 +198,7 @@ class GstAVPipeline:
         self._pipeline.add(alsasink)
         return alsasink
 
-    def _add_audiotestsrc(self) -> Gst.Element:
+    def _add_audiotestsrc(self) -> Tuple[Gst.Element, Gst.Element]:
         """audio silent stream used to feed alsasink before user connects"""
         audiotestsrc = Gst.ElementFactory.make("audiotestsrc")
         assert audiotestsrc is not None
@@ -207,7 +207,16 @@ class GstAVPipeline:
         # Send buffers the size of the remote branch (10ms @ 8kHz)
         audiotestsrc.set_property("samplesperbuffer", 80)
         self._pipeline.add(audiotestsrc)
-        return audiotestsrc
+
+        audio_caps = Gst.caps_from_string("audio/x-raw")
+        assert audio_caps is not None
+        audio_caps.set_value("channels", 2)
+        audio_caps_capsfilter = Gst.ElementFactory.make("capsfilter")
+        assert audio_caps_capsfilter is not None
+        audio_caps_capsfilter.set_property("caps", audio_caps)
+        self._pipeline.add(audio_caps_capsfilter)
+
+        return audiotestsrc, audio_caps_capsfilter
 
     def _add_fallbackswitch(self, name: str) -> Gst.Element:
         fallbackswitch = Gst.ElementFactory.make("fallbackswitch")
@@ -347,7 +356,7 @@ class GstAVPipeline:
             self._logger.error("Failed to link caps -> webrtcsink")
 
     def _set_audio_playback(self) -> None:
-        audiotestsrc = self._add_audiotestsrc()
+        audiotestsrc, audiocaps = self._add_audiotestsrc()
         fallbackswitch = self._add_fallbackswitch("fallbackswitch-in")
         webrtcechoprobe = self._add_webrtcechoprobe()
         audioconvert = self._add_audioconvert()
@@ -355,8 +364,10 @@ class GstAVPipeline:
         valve = self._add_valve()
         alsasink = self._add_alsasink(self._lowlatencyaudio)
 
-        if not Gst.Element.link(audiotestsrc, fallbackswitch):
-            self._logger.error("Failed to link audiotestsrc -> fallbackswitch")
+        if not Gst.Element.link(audiotestsrc, audiocaps):
+            self._logger.error("Failed to link audiotestsrc -> audiocaps")
+        if not Gst.Element.link(audiocaps, fallbackswitch):
+            self._logger.error("Failed to link audiocaps -> fallbackswitch")
         if not Gst.Element.link(fallbackswitch, webrtcechoprobe):
             self._logger.error("Failed to link fallbackswitch -> webrtcprobe")
         if not Gst.Element.link(webrtcechoprobe, audioconvert):
