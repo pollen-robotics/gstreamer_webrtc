@@ -9,6 +9,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 import time
+from datetime import timedelta
 
 import rclpy
 from gi.repository import Gst
@@ -21,9 +22,8 @@ from pollen_vision.camera_wrappers.depthai.utils import (
 )
 from rclpy.executors import MultiThreadedExecutor
 
-from gstreamer.avpipeline import GstAVPipeline, CameraUserData
+from gstreamer.avpipeline import CameraUserData, GstAVPipeline
 from gstreamer.ros_publisher import ROSPublisher
-from datetime import timedelta
 
 
 def parse_args() -> argparse.Namespace:
@@ -148,7 +148,7 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
     logging.info(f"Camera latency : {min(latencies)} ns")
     logging.info(f"Camera latency offset : {offset} ns")
 
-    return min(latencies) #- offset
+    return min(latencies)  # - offset
 
 
 def configure_pipeline(
@@ -213,28 +213,27 @@ async def main_loop(args: argparse.Namespace) -> None:
     appsink_udata_left = CameraUserData(video_left)
     appsink_udata_right = CameraUserData(video_right)
 
-
     await avpipeline.start()
 
     if args.ros:
         thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop(), stop_event), daemon=True)
         thread_ros.start()
 
-    _,_, first_ts = teleop_wrapper.get_data_h264()
+    _, _, first_ts = teleop_wrapper.get_data_h264()
     first_ts = first_ts.copy()
     try:
         while not stop_event.is_set():
             if teleop_wrapper:
                 data, latency, ts = teleop_wrapper.get_data_h264()
-                #print(str(latency))
-                #logging.debug(f"Left latency : {latency['left']}, Right latency : {latency['right']}")
-                #logging.debug(f"ts: {ts['left']} {ts['left'].microseconds * 1000} ns")
-                clock = (ts["left"] - first_ts["left"]) / timedelta(microseconds=1) * 1000  # convert to ns
-                #logging.debug(f"clock : {clock / timedelta(microseconds=1) * 1000} ns ts : {ts['left']} first_ts : {first_ts['left']} ns")
-                #logging.debug(f"Left latency : {latency['left'].microseconds * 1000} ns, Right latency : {latency['right'].microseconds * 1000} ns")
-                #avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
-                #avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
-                avpipeline.push_frame(appsink_udata_left, data["left"], clock,  latency["left"].microseconds * 1000)
+                # print(str(latency))
+                # logging.debug(f"Left latency : {latency['left']}, Right latency : {latency['right']}")
+                # logging.debug(f"ts: {ts['left']} {ts['left'].microseconds * 1000} ns")
+                clock_left = (ts["left"] - first_ts["left"]) / timedelta(microseconds=1) * 1000  # convert to ns
+                clock_right = (ts["right"] - first_ts["right"]) / timedelta(microseconds=1) * 1000  # convert to ns
+                # avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
+                # avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
+                avpipeline.push_frame(appsink_udata_left, data["left"], clock_left, latency["left"].microseconds * 1000)
+                avpipeline.push_frame(appsink_udata_right, data["right"], clock_right, latency["right"].microseconds * 1000)
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
