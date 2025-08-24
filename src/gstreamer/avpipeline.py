@@ -11,7 +11,7 @@ from threading import Thread
 from typing import Dict, List, Optional, Tuple
 
 import numpy.typing as npt
-from gi.repository import GLib, Gst
+from gi.repository import GLib, Gst, GstApp
 from gst_signalling import GstSignallingListener
 
 
@@ -24,8 +24,6 @@ class CameraUserData:
         self.camera_clock = Gst.SystemClock()
         self.camera_clock.set_name("camera-clock")
         self.camera_clock.set_property("clock-type", Gst.ClockType.MONOTONIC)
-
-        self.got_first_buf = False
 
 
 class GstAVPipeline:
@@ -158,7 +156,7 @@ class GstAVPipeline:
         self._signaller = webrtcsink.get_property("signaller")
         self._signaller.set_property("uri", f"ws://{self._signalling_host}:{self._signalling_port}")
 
-        webrtcsink.connect("consumer-pipeline-created", self._on_consumer_pipeline_created, webrtcsink)
+        webrtcsink.connect("consumer-pipeline-created", self._on_consumer_pipeline_created)
 
         self._pipeline.add(webrtcsink)
         return webrtcsink

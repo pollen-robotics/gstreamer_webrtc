@@ -148,7 +148,7 @@ def compute_camera_latency(teleop_wrapper: TeleopWrapper) -> int:
     logging.info(f"Camera latency : {min(latencies)} ns")
     logging.info(f"Camera latency offset : {offset} ns")
 
-    return min(latencies)  # - offset
+    return min(latencies) - offset
 
 
 def configure_pipeline(
