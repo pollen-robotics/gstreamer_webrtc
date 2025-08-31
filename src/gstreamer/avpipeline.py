@@ -172,7 +172,7 @@ class GstAVPipeline:
         appsrc.set_property("max-buffers", 100)
         self._logger.info(f"Video latency configured to {cam_latency_ns}")
 
-        video_caps = Gst.caps_from_string("video/x-h264,stream-format=byte-stream,alignment=au")
+        video_caps = Gst.caps_from_string("video/x-h265,stream-format=byte-stream,alignment=au")
         assert video_caps is not None
         appsrc.set_property("caps", video_caps)
 
@@ -342,18 +342,6 @@ class GstAVPipeline:
         self._pipeline.add(webrtcechoprobe)
         return webrtcechoprobe
 
-    def _add_fakesink(self) -> Gst.Element:
-        fakesink = Gst.ElementFactory.make("fakesink")
-        assert fakesink is not None
-        self._pipeline.add(fakesink)
-        return fakesink
-
-    def _add_gdppay(self) -> Gst.Element:
-        gdppay = Gst.ElementFactory.make("gdppay")
-        assert gdppay is not None
-        self._pipeline.add(gdppay)
-        return gdppay
-
     def _add_filesink(self) -> Gst.Element:
         filesink = Gst.ElementFactory.make("filesink")
         assert filesink is not None
@@ -370,19 +358,6 @@ class GstAVPipeline:
             self._logger.error("Failed to link appsrc -> webrtcsink")
         if not Gst.Element.link(self._appsrc_right, webrtcsink):
             self._logger.error("Failed to link appsrc_right -> webrtcsink")
-
-        """
-        fakesink = self._add_fakesink()
-        if not Gst.Element.link(self._appsrc_left, fakesink):
-            self._logger.error("Failed to link appsrc_left -> fakesink")
-
-        gdppay = self._add_gdppay()
-        filesink = self._add_filesink()
-        if not Gst.Element.link(self._appsrc_left, gdppay):
-            self._logger.error("Failed to link appsrc_left -> gdppay")
-        if not Gst.Element.link(gdppay, filesink):
-            self._logger.error("Failed to link gdppay -> filesink")
-        """
 
     def _set_stereo_audio(self, webrtcsink: Gst.Element) -> None:
         self._logger.info("Set up stereo audio pipeline")
@@ -443,7 +418,13 @@ class GstAVPipeline:
 
         # Gst.debug_bin_to_dot_file(self._pipeline, Gst.DebugGraphDetails.ALL, "pipeline_gdppay")
 
-    def push_frame(self, udata: CameraUserData, data: npt.NDArray[np.uint8], camera_ts: int = 0, latency_ns: int = 0) -> None:
+    def push_frame(
+        self,
+        udata: CameraUserData,
+        data: npt.NDArray[np.uint8],
+        camera_ts: int = 0,
+        latency_ns: int = 0,
+    ) -> None:
         rt = udata.appsrc.get_current_running_time()
         if rt == Gst.CLOCK_TIME_NONE:
             # not ready yet
@@ -468,6 +449,7 @@ class GstAVPipeline:
         buf.dts = ts
 
         udata.appsrc.push_buffer(buf)
+
         return Gst.FlowReturn.OK
 
     def dump_latency(self) -> None:

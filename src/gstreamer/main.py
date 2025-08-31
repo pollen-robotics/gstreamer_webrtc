@@ -181,7 +181,11 @@ def configure_pipeline(
     return avpipeline, video_left, video_right
 
 
-def thread_ros_fun(teleop_wrapper: TeleopWrapper, asyncio_loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
+def thread_ros_fun(
+    teleop_wrapper: TeleopWrapper,
+    asyncio_loop: asyncio.AbstractEventLoop,
+    stop_event: asyncio.Event,
+) -> None:
     rclpy.init()
     executor = MultiThreadedExecutor()
     rospublisher_left_cam = ROSPublisher(teleop_wrapper.cam_config, "left", asyncio_loop, stop_event)
@@ -216,7 +220,11 @@ async def main_loop(args: argparse.Namespace) -> None:
     await avpipeline.start()
 
     if args.ros:
-        thread_ros = Thread(target=thread_ros_fun, args=(teleop_wrapper, asyncio.get_event_loop(), stop_event), daemon=True)
+        thread_ros = Thread(
+            target=thread_ros_fun,
+            args=(teleop_wrapper, asyncio.get_event_loop(), stop_event),
+            daemon=True,
+        )
         thread_ros.start()
 
     _, _, first_ts = teleop_wrapper.get_data_h264()
@@ -232,8 +240,18 @@ async def main_loop(args: argparse.Namespace) -> None:
                 clock_right = (ts["right"] - first_ts["right"]) / timedelta(microseconds=1) * 1000  # convert to ns
                 # avpipeline.push_frame(video_left, data["left"], latency["left"].microseconds * 1000)
                 # avpipeline.push_frame(video_right, data["right"], latency["right"].microseconds * 1000)
-                avpipeline.push_frame(appsink_udata_left, data["left"], clock_left, latency["left"].microseconds * 1000)
-                avpipeline.push_frame(appsink_udata_right, data["right"], clock_right, latency["right"].microseconds * 1000)
+                avpipeline.push_frame(
+                    appsink_udata_left,
+                    data["left"],
+                    clock_left,
+                    latency["left"].microseconds * 1000,
+                )
+                avpipeline.push_frame(
+                    appsink_udata_right,
+                    data["right"],
+                    clock_right,
+                    latency["right"].microseconds * 1000,
+                )
                 # get_data is blocking. giving space to async methods
                 await asyncio.sleep(0)
             else:
